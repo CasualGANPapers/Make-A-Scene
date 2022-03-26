@@ -25,7 +25,7 @@ Refer to the different folders to see details.
 - [ ] VQ-SEG
 - [ ] VQ-IMG
 - [ ] Transformer
-- [ ] Data Aquisition
+- [ ] Data Aggregation
 
 ## Citation
 ```bibtex

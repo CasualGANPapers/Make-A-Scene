@@ -1,3 +1,7 @@
+"""
+Code taken from https://github.com/cydonia999/VGGFace2-pytorch
+"""
+
 import torch.nn as nn
 import torch
 import math
