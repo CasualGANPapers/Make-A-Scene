@@ -19,3 +19,23 @@ Make-A-Scene modifies the VQGAN framework. It makes heavy use of using semantic 
 <img width="500" alt="results" src="https://user-images.githubusercontent.com/61938694/160242667-fd82b900-b2df-4ffb-9cee-54660e502944.png">
 <em>Figure 6. from paper</em>
 </p>
+
+## What needs to be done?
+Refer to the different folders to see details.
+- [ ] VQ-SEG
+- [ ] VQ-IMG
+- [ ] Transformer
+- [ ] Data Aquisition
+
+## Citation
+```bibtex
+@misc{https://doi.org/10.48550/arxiv.2203.13131,
+  doi = {10.48550/ARXIV.2203.13131},
+  url = {https://arxiv.org/abs/2203.13131},
+  author = {Gafni, Oran and Polyak, Adam and Ashual, Oron and Sheynin, Shelly and Parikh, Devi and Taigman, Yaniv},
+  title = {Make-A-Scene: Scene-Based Text-to-Image Generation with Human Priors},
+  publisher = {arXiv},
+  year = {2022},
+  copyright = {arXiv.org perpetual, non-exclusive license}
+}
+```
