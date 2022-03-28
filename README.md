@@ -6,7 +6,7 @@ Pytorch implementation of Make-A-Scene: Scene-Based Text-to-Image Generation wit
 <em>Figure 1. from paper</em>
 </p>
 
-#### Note: this is work in progress. Everyone is happily invited to contribute
+#### Note: this is work in progress. Everyone is happily invited to contribute -> Telegram Group: https://t.me/+8JbTQl65y5w3ZjVi
 
 ## Paper Description:
 Make-A-Scene modifies the VQGAN framework. It makes heavy use of using semantic segmentation maps for extra conditioning. This enables more influence on the generation process. Morever, it also conditions on text. The main improvements are the following:
