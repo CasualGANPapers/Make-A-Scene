@@ -14,9 +14,10 @@ class BCELossWithQuant(nn.Module):
     def __init__(self, codebook_weight=1.):
         super().__init__()
         self.codebook_weight = codebook_weight
+        self.weight = torch.ones(args.image_channels).index_fill(0, torch.arange(153, 158), 20)
 
     def forward(self, qloss, target, prediction):
-        bce_loss = F.binary_cross_entropy_with_logits(prediction, target)
+        bce_loss = F.binary_cross_entropy_with_logits(prediction, target, weight=self.weight)
         loss = bce_loss + self.codebook_weight * qloss
         return loss
 
@@ -154,7 +155,7 @@ if __name__ == '__main__':
     parser.add_argument('--num-codebook-vectors', type=int, default=1024,
                         help='number of codebook vectors (default: 1024)')
     parser.add_argument('--beta', type=float, default=0.25, help='commitment loss scalar (default: 0.25)')
-    parser.add_argument('--image-channels', type=int, default=160, help='number of channels of images (default: 3)')
+    parser.add_argument('--image-channels', type=int, default=159, help='number of channels of images (default: 3)')
     parser.add_argument('--dataset-path', type=str, default='/data', metavar='Path',
                         help='Path to data (default: /data)')
     parser.add_argument('--device', type=str, default="cuda", metavar='cuda', help='which device the training is on')
@@ -180,4 +181,4 @@ if __name__ == '__main__':
                  "dropout": 0.0
                  }
 
-    vq_seg = VQSegmentationModel(ddconfig, args)
+    vq_seg = VQSegmentationModel(dd_config, args)
