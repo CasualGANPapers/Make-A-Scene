@@ -25,7 +25,7 @@ Refer to the different folders to see details.
 - [ ] [VQ-SEG](https://github.com/CasualGANPapers/Make-A-Scene/tree/main/VQ-SEG)
 - [ ] [VQ-IMG](https://github.com/CasualGANPapers/Make-A-Scene/tree/main/VQ-IMG)
 - [ ] [Transformer]()
-- [ ] [Data Aggregation](https://github.com/CasualGANPapers/Make-A-Scene/tree/main/Data)
+- [X] [Data Aggregation](https://github.com/CasualGANPapers/Make-A-Scene/tree/main/Data)
 
 ## Citation
 ```bibtex
