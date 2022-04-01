@@ -7,6 +7,7 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 import torch.multiprocessing as mp
 import warnings
+from torchvision import transforms
 
 try:
     from preprocessors import Detectron2, HumanParts, HumanFace, get_edges
@@ -26,6 +27,10 @@ class PreprocessedDataset(Dataset):
         self.preprocessed_folder = preprocessed_folder
         self.root = root
         self.proc_total = proc_total
+        self.transforms = transforms.Compose([
+            transforms.RandomCrop((256, 256)),
+            # transforms.CenterCrop((256, 256))
+        ])
 
         if not os.path.exists(preprocessed_folder):
             os.makedirs(preprocessed_folder)
@@ -156,14 +161,16 @@ class PreprocessedDataset(Dataset):
 
     def __getitem__(self, idx):
         img_name = self.img_names[idx]
-        image = cv2.imread(os.path.join(self.root, img_name))
         try:
             segmentation = self.load_segmentation(img_name)
         except FileNotFoundError:
             self.preprocess_single_image(img_name)
             segmentation = self.load_segmentation(img_name)
+        segmentation = self.transforms(segmentation)
+        return img_name, segmentation.type(torch.FloatTensor)
 
-        return img_name, segmentation
+    def __len__(self):
+        return len(self.img_names)
 
 
 class COCO2014Dataset(PreprocessedDataset):

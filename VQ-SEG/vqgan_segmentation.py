@@ -1,77 +1,46 @@
 import argparse
-import logging
-import os
 import torch
 import torch.nn.functional as F
 from torch import nn
-import torchvision.utils as vutils
-from tqdm import tqdm
 from taming.modules.diffusionmodules.model import Encoder, Decoder
-from taming.modules.vqvae.quantize import VectorQuantizer2 as VectorQuantizer
+from taming.modules.vqvae.quantize import VectorQuantizer
+import pytorch_lightning as pl
+from dataset_preprocessor import COCO2014Dataset
+from torch.utils.data import DataLoader
+import torchvision.utils as vutils
+
+
+pl.seed_everything(69696969)
 
 
 class BCELossWithQuant(nn.Module):
     def __init__(self, codebook_weight=1.):
         super().__init__()
         self.codebook_weight = codebook_weight
-        self.weight = torch.ones(args.image_channels).index_fill(0, torch.arange(153, 158), 20)
+        self.register_buffer("weight", torch.ones(args.image_channels).index_fill(0, torch.arange(153, 158), 20))
 
     def forward(self, qloss, target, prediction):
-        bce_loss = F.binary_cross_entropy_with_logits(prediction, target, weight=self.weight)
+        bce_loss = F.binary_cross_entropy_with_logits(prediction.permute(0, 2, 3, 1), target.permute(0, 2, 3, 1),
+                                                      pos_weight=self.weight)
         loss = bce_loss + self.codebook_weight * qloss
         return loss
 
 
-class VQSegmentationModel(nn.Module):
-    def __init__(self, ddconfig, args):
-        super().__init__()
-        self.register_buffer("colorize", torch.randn(3, args.image_channels, 1, 1))
-        self.loss = BCELossWithQuant()
-        self.encoder = Encoder(**ddconfig)
-        self.decoder = Decoder(**ddconfig)
-        self.quantize = VectorQuantizer(args.num_codebook_vectors, args.latent_dim, beta=0.25)
-        self.quant_conv = nn.Conv2d(args.latent_dim, args.latent_dim, 1)
-        self.post_quant_conv = nn.Conv2d(args.latent_dim, args.latent_dim, 1)
-
-    def setup(self, args):
-        path = os.path.join("checkpoints", self.run_name)
-        if os.path.exists(path) and args.start_from_epoch == 0:
-            raise Exception(f"{self.run_name} is already a directory, please choose a different name for your run!")
-        else:
-            if args.start_from_epoch == 0:
-                os.mkdir(path)
-                os.mkdir(os.path.join(path, "results"))
-            else:
-                self.load_checkpoint(args.start_from_epoch)
-            logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, force=True,
-                                datefmt="%I:%M:%S",
-                                handlers=[logging.FileHandler(os.path.join(path, "log.txt")), logging.StreamHandler()])
-
-    def configure_optimizers(self):
-        lr = self.learning_rate
-        opt_ae = torch.optim.Adam(list(self.encoder.parameters()) +
-                                  list(self.decoder.parameters()) +
-                                  list(self.quantize.parameters()) +
-                                  list(self.quant_conv.parameters()) +
-                                  list(self.post_quant_conv.parameters()),
-                                  lr=lr, betas=(0.5, 0.9))
-        return opt_ae
-
-    def load_checkpoint(self, epoch):
-        path = os.path.join("checkpoints", self.run_name, f"epoch_{epoch}")
-        assert isinstance(epoch, int)
-        self.encoder.load_state_dict(torch.load(os.path.join(path, "encoder.pt")))
-        self.decoder.load_state_dict(torch.load(os.path.join(path, "decoder.pt")))
-        self.codebook.load_state_dict(torch.load(os.path.join(path, "codebook.pt")))
-        self.quant_conv.load_state_dict(torch.load(os.path.join(path, "quant_conv.pt")))
-        self.post_quant_conv.load_state_dict(torch.load(os.path.join(path, "post_quant_conv.pt")))
-        logging.info(f"Loaded all models from epoch {epoch} (without Discriminator!")
+class VQBASE(pl.LightningModule):
+    def __init__(self, args):
+        super(VQBASE, self).__init__()
+        self.encoder = Encoder(**args.dd_config).to(args.device)
+        self.decoder = Decoder(**args.dd_config).to(args.device)
+        self.quantize = VectorQuantizer(args.num_codebook_vectors, args.latent_dim, beta=0.25).to(args.device)
+        self.quant_conv = nn.Conv2d(args.latent_dim, args.latent_dim, 1).to(args.device)
+        self.post_quant_conv = nn.Conv2d(args.latent_dim, args.latent_dim, 1).to(args.device)
+        self.learning_rate = args.learning_rate
 
     def encode(self, x):
         h = self.encoder(x)
         h = self.quant_conv(h)
-        quant, emb_loss, info = self.quantize(h)
-        return quant, emb_loss, info
+        quant, emb_loss = self.quantize(h)
+        return quant, emb_loss
 
     def decode(self, quant):
         quant = self.post_quant_conv(quant)
@@ -84,73 +53,79 @@ class VQSegmentationModel(nn.Module):
         return dec
 
     def forward(self, input):
-        quant, diff, _ = self.encode(input)
+        quant, diff = self.encode(input)
         dec = self.decode(quant)
         return dec, diff
 
-    def training(self, args):
-        # load_data() still needs to be defined
-        dataset = load_data(args)
-        for epoch in range(args.start_from_epoch, args.epochs):
-            with tqdm(range(len(dataset))) as pbar:
-                for i, imgs in zip(pbar, dataset):
-                    imgs = imgs.to(device=args.device)
-                    imgs_rec, qloss = self(imgs)
-                    loss_vq = self.loss(qloss, imgs, imgs_rec)
 
-                    self.opt_vq.zero_grad()
-                    loss_vq.backward(retain_graph=True)
-                    self.opt_vq.step()
+class VQSEG(VQBASE):
+    def __init__(self, args):
+        super().__init__(args)
+        self.register_buffer("colorize", torch.randn(3, args.image_channels, 1, 1))
+        self.loss = BCELossWithQuant()
 
-                    if i % 10 == 0:
-                        with torch.no_grad():
-                            both = torch.cat((imgs[:4], imgs_rec.add(1).mul(0.5)[:4]))
-                            vutils.save_image(both, "results" + f'/{epoch}_{i}.jpg', nrow=4)
+    def configure_optimizers(self):
+        lr = self.learning_rate
+        opt_ae = torch.optim.Adam(list(self.encoder.parameters()) +
+                                  list(self.decoder.parameters()) +
+                                  list(self.quantize.parameters()) +
+                                  list(self.quant_conv.parameters()) +
+                                  list(self.post_quant_conv.parameters()),
+                                  lr=lr, betas=(0.5, 0.9))
+        return opt_ae
 
-                if args.save_models:
-                    path = os.path.join("checkpoints", self.run_name)
-                    os.makedirs(path, exist_ok=True)
-                    epoch_path = os.path.join(path, f"epoch_{epoch}")
-                    os.makedirs(os.path.join(epoch_path), exist_ok=True)
-                    torch.save(self.encoder.state_dict(), os.path.join(epoch_path, "encoder.pt"))
-                    torch.save(self.decoder.state_dict(), os.path.join(epoch_path, "decoder.pt"))
-                    torch.save(self.codebook.state_dict(), os.path.join(epoch_path, "codebook.pt"))
-                    torch.save(self.quant_conv.state_dict(), os.path.join(epoch_path, "quant_conv.pt"))
-                    torch.save(self.post_quant_conv.state_dict(), os.path.join(epoch_path, "post_quant_conv.pt"))
+    def training_step(self, batch, batch_idx):
+        _, seg = batch
+        seg_rec, qloss = self(seg)
+        loss_vq = self.loss(qloss, seg, seg_rec)
+        self.log("vq_loss", loss_vq, prog_bar=True)
 
-    @torch.no_grad()
-    def log_images(self, batch):
-        log = dict()
-        x = self.get_input(batch, self.image_key)
-        x = x.to(self.device)
-        xrec, _ = self(x)
-        if x.shape[1] > 3:
-            # colorize with random projection
-            assert xrec.shape[1] > 3
-            # convert logits to indices
-            xrec = torch.argmax(xrec, dim=1, keepdim=True)
-            xrec = F.one_hot(xrec, num_classes=x.shape[1])
-            xrec = xrec.squeeze(1).permute(0, 3, 1, 2).float()
-            x = self.to_rgb(x)
-            xrec = self.to_rgb(xrec)
-        log["inputs"] = x
-        log["reconstructions"] = xrec
-        return log
+        if batch_idx % 10 == 0:
+            with torch.no_grad():
+                seg_rgb, seg_rec_rgb = self.log_images(seg, seg_rec)
+                both = torch.cat((self.to_rgb(seg), seg_rgb, self.to_rgb(seg_rec), seg_rec_rgb))
+                grid = vutils.make_grid(both, nrow=4)
+                vutils.save_image(both, f"./results/{self.current_epoch}_{batch_idx}.jpg", nrow=4)
+                self.logger.experiment.add_image('Generated Images', grid, f"{self.current_epoch}_{batch_idx}")
+
+        return loss_vq
+
+    def validation_step(self, batch, batch_idx):
+        _, seg = batch
+        seg_rec, qloss = self(seg)
+        loss_vq = self.loss(qloss, seg, seg_rec)
+        self.log("vq_loss", loss_vq, prog_bar=True)
+        return loss_vq
 
     def to_rgb(self, x):
-        assert self.image_key == "segmentation"
         if not hasattr(self, "colorize"):
             self.register_buffer("colorize", torch.randn(3, x.shape[1], 1, 1).to(x))
         x = F.conv2d(x, weight=self.colorize)
         x = 2. * (x - x.min()) / (x.max() - x.min()) - 1.
         return x
 
+    @torch.no_grad()
+    def log_images(self, seg, seg_rec):
+        seg_rec = torch.argmax(seg_rec, dim=1, keepdim=True)
+        seg_rec = F.one_hot(seg_rec, num_classes=seg.shape[1])
+        seg_rec = seg_rec.squeeze(1).permute(0, 3, 1, 2).float()
+        return self.to_rgb(seg), self.to_rgb(seg_rec)
+
+
+def train(args):
+    vqseg = VQSEG(args)
+    dataset = COCO2014Dataset("./tmpdb/", "./tmpdb/preprocessed_folder")
+    data_loader = DataLoader(dataset, batch_size=args.batch_size)
+    trainer = pl.Trainer(accelerator="gpu", devices=1, check_val_every_n_epoch=100, max_epochs=50,
+                         num_sanity_val_steps=0)
+    trainer.fit(vqseg, data_loader, data_loader)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="VQ-SEG")
     parser.add_argument('--run-name', type=str, default='default',
                         help='Give this training run a name (default: current timestamp)')
-    parser.add_argument('--latent-dim', type=int, default=512, help='latent dimension n_z (default: 256)')
+    parser.add_argument('--latent-dim', type=int, default=32, help='latent dimension n_z (default: 256)')
     parser.add_argument('--image-size', type=int, default=256, help='Image height and width (default: 256)')
     parser.add_argument('--num-codebook-vectors', type=int, default=1024,
                         help='number of codebook vectors (default: 1024)')
@@ -159,26 +134,25 @@ if __name__ == '__main__':
     parser.add_argument('--dataset-path', type=str, default='/data', metavar='Path',
                         help='Path to data (default: /data)')
     parser.add_argument('--device', type=str, default="cuda", metavar='cuda', help='which device the training is on')
-    parser.add_argument('--batch-size', type=int, default=5, help='input batch size for training (default: 32)')
+    parser.add_argument('--batch-size', type=int, default=2, help='input batch size for training (default: 32)')
     parser.add_argument('--epochs', type=int, default=100, metavar='N', help='number of epochs to train (default: 50)')
-    parser.add_argument('--learning-rate', type=float, default=5e-5, metavar='LR', help='learning rate')
+    parser.add_argument('--learning-rate', type=float, default=1e-5, metavar='LR', help='learning rate')
     parser.add_argument('--start-from-epoch', type=int, default=0,
                         help='Use a saved checkpoint, 0 means no checkpoint (default: 0)')
     parser.add_argument('--save-models', type=bool, default=True, help='Save all models each epoch (default: True)')
 
     args = parser.parse_args()
 
-    # taken from configs/sflickr_cond_stage.yaml
-    dd_config = {"double_z": False,
-                 "z_channels": 256,
-                 "resolution": 256,
-                 "in_channels": 160,
-                 "out_ch": 160,
-                 "ch": 128,
-                 "ch_mult": [1, 1, 2, 2, 4],
-                 "num_res_blocks": 2,
-                 "attn_resolutions": 16,
-                 "dropout": 0.0
-                 }
+    args.dd_config = {"double_z": False,
+                      "z_channels": 256,
+                      "resolution": 256,
+                      "in_channels": 160,
+                      "out_ch": 160,
+                      "ch": 128,
+                      "ch_mult": [1, 1, 2, 2, 4],
+                      "num_res_blocks": 2,
+                      "attn_resolutions": 16,
+                      "dropout": 0.0
+                      }
 
-    vq_seg = VQSegmentationModel(dd_config, args)
+    train(args)
