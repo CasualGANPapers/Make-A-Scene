@@ -185,6 +185,6 @@ class COCO2014Dataset(PreprocessedDataset):
 
 if __name__ == "__main__":
     coco = COCO2014Dataset(
-        "../../tmpdb/", "../../tmpdb/preprocessed_folder", proc_total=4
+        "../../../tmpdb/", "../../../tmpdb/preprocessed_folder", proc_total=8
     )
     print(coco[1])

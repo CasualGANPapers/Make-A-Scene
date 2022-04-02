@@ -13,7 +13,7 @@ class PanopticPreprocesor:
     def __init__(
         self,
         one_channel=True,
-        config="../../detectron2/projects/Panoptic-DeepLab/configs/COCO-PanopticSegmentation/panoptic_deeplab_R_52_os16_mg124_poly_200k_bs64_crop_640_640_coco_dsconv.yaml",
+        config="../../../detectron2/projects/Panoptic-DeepLab/configs/COCO-PanopticSegmentation/panoptic_deeplab_R_52_os16_mg124_poly_200k_bs64_crop_640_640_coco_dsconv.yaml",
         num_classes=133,
         model_weights="model_final_5e6da2.pkl",
         device=None,

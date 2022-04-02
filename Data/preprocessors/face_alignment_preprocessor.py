@@ -81,7 +81,6 @@ class FaceAlignmentPreprocessor:
                         seg_mask[point[1], point[0]] = class_id + 1
                     except IndexError as e:
                         # Probably only part of the face on the image
-                        print(e)
                         pass
         return seg_mask  # F.one_hot(seg_mask.to(torch.long), num_classes=6)[..., 1:].permute(2, 0, 1)
 

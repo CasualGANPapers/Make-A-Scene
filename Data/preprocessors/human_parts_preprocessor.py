@@ -5,7 +5,8 @@ import torch
 import torch.nn.functional as F
 import torchvision.transforms as transforms
 
-sys.path.append("../../Self-Correction-Human-Parsing")
+HUMAN_PARSER_DIR = "../../../Self-Correction-Human-Parsing"
+sys.path.append(HUMAN_PARSER_DIR)
 import networks
 from simple_extractor import get_palette, dataset_settings
 from collections import OrderedDict
@@ -15,7 +16,7 @@ from utils.transforms import transform_logits, get_affine_transform
 class HumanPartsPreprocessor:
     def __init__(
         self,
-        weights="../../Self-Correction-Human-Parsing/checkpoints/final.pth",
+        weights=HUMAN_PARSER_DIR + "/checkpoints/final.pth",
         device="cuda",
     ):
         self.device = device
