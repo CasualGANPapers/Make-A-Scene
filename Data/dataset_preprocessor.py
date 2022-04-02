@@ -81,8 +81,18 @@ class PreprocessedDataset(Dataset):
                 procs.append(p)
             for proc in procs:
                 proc.join()
+            self.img_names = []
+            for proc_id in range(self.proc_total):
+                names = np.load(f"tmp_names_{proc_id}.npz")["names"]
+                os.remove(f"tmp_names_{proc_id}.npz")
+                self.img_names.extend(names)
+            print(len(self.img_names))
+            np.savez(
+                os.path.join(self.preprocessed_folder, "img_names"), img_names=self.img_names
+            )
 
-    def preprocess_single_process(self, proc_id):
+    def preprocess_single_process(self, proc_id,):
+        correct_names = []
         device = f"cuda:{proc_id%torch.cuda.device_count()}"
         torch.cuda.set_device(  # https://github.com/pytorch/pytorch/issues/21819#issuecomment-553310128
             proc_id % self.proc_total
@@ -93,9 +103,11 @@ class PreprocessedDataset(Dataset):
         img_names = self.img_names[proc_id :: self.proc_total]
         bar = tqdm(img_names) if proc_id == 0 else img_names
         for img_name in bar:
-            self.preprocess_single_image(img_name, proc_id)
+            if self.preprocess_single_image(img_name, proc_id,):
+                correct_names.append(img_name)
+        np.savez(f"tmp_names_{proc_id}", names=correct_names)
 
-    def preprocess_single_image(self, img_name, proc_id=None):
+    def preprocess_single_image(self, img_name, proc_id=None, correct_img_names=None):
         detectron2 = self.detectron2 if proc_id is None else self.detectron2[proc_id]
         human_parsing = (
             self.human_parsing if proc_id is None else self.human_parsing[proc_id]
@@ -103,6 +115,8 @@ class PreprocessedDataset(Dataset):
         human_face = self.human_face if proc_id is None else self.human_face[proc_id]
 
         image = cv2.imread(os.path.join(self.root, img_name))
+        if image.shape[0]<256 or image.shape[1]<256:
+            return False
 
         seg_panoptic = detectron2(image).to(torch.int32).cpu().numpy()
         seg_human = human_parsing(image).to(torch.int32).cpu().numpy()
@@ -134,6 +148,7 @@ class PreprocessedDataset(Dataset):
                 seg_face=seg_face,
                 seg_edges=seg_edges,
             )
+        return True
 
     def load_segmentation(self, img_name):
         data = np.load(
@@ -188,3 +203,4 @@ if __name__ == "__main__":
         "../../../tmpdb/", "../../../tmpdb/preprocessed_folder", proc_total=8
     )
     print(coco[1])
+1
