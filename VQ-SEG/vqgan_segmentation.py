@@ -20,8 +20,8 @@ class BCELossWithQuant(nn.Module):
         self.register_buffer("weight", torch.ones(args.image_channels).index_fill(0, torch.arange(153, 158), 20))
 
     def forward(self, qloss, target, prediction):
-        bce_loss = F.binary_cross_entropy_with_logits(prediction.permute(0, 2, 3, 1), target.permute(0, 2, 3, 1),
-                                                      pos_weight=self.weight)
+        bce_loss = F.binary_cross_entropy_with_logits(prediction.permute(0, 2, 3, 1), target.permute(0, 2, 3, 1), pos_weight=self.weight)
+        # bce_loss = F.binary_cross_entropy_with_logits(prediction.permute(0, 2, 3, 1), target.permute(0, 2, 3, 1))
         loss = bce_loss + self.codebook_weight * qloss
         return loss
 
@@ -77,18 +77,21 @@ class VQSEG(VQBASE):
     def training_step(self, batch, batch_idx):
         _, seg = batch
         seg_rec, qloss = self(seg)
-        loss_vq = self.loss(qloss, seg, seg_rec)
-        self.log("vq_loss", loss_vq, prog_bar=True)
+        bce_q_loss = self.loss(qloss, seg, seg_rec)
+        total_loss = F.mse_loss(seg, seg_rec.sigmoid()) + bce_q_loss
+        # total_loss = F.l1_loss(seg, seg_rec) + bce_q_loss
+        self.log("vq_loss", total_loss, prog_bar=True)
 
         if batch_idx % 10 == 0:
             with torch.no_grad():
-                seg_rgb, seg_rec_rgb = self.log_images(seg, seg_rec)
-                both = torch.cat((self.to_rgb(seg), seg_rgb, self.to_rgb(seg_rec), seg_rec_rgb))
-                grid = vutils.make_grid(both, nrow=4)
-                vutils.save_image(both, f"./results/{self.current_epoch}_{batch_idx}.jpg", nrow=4)
+                seg_rgb = self.to_rgb(seg, bruh=False)
+                seg_rec_rgb = self.to_rgb(seg_rec.sigmoid())
+                both = torch.cat((seg_rgb, seg_rec_rgb))
+                grid = vutils.make_grid(both, nrow=3)
+                vutils.save_image(both, f"./results/{self.current_epoch}_{batch_idx}.jpg", nrow=3)
                 self.logger.experiment.add_image('Generated Images', grid, f"{self.current_epoch}_{batch_idx}")
 
-        return loss_vq
+        return total_loss
 
     def validation_step(self, batch, batch_idx):
         _, seg = batch
@@ -97,19 +100,53 @@ class VQSEG(VQBASE):
         self.log("vq_loss", loss_vq, prog_bar=True)
         return loss_vq
 
-    def to_rgb(self, x):
-        if not hasattr(self, "colorize"):
-            self.register_buffer("colorize", torch.randn(3, x.shape[1], 1, 1).to(x))
-        x = F.conv2d(x, weight=self.colorize)
-        x = 2. * (x - x.min()) / (x.max() - x.min()) - 1.
-        return x
+    def to_rgb(self, x, rec=True, bruh=True):
+        x = x[0:1, :, :, :]
+        if rec:
+            if not hasattr(self, "human_colorize"):
+                # self.register_buffer("human_colorize", torch.randn(3, 20, 1, 1).to(x))
+                self.register_buffer("human_colorize", torch.arange(3*20).reshape(3, 20, 1, 1).to(x))
+            if not hasattr(self, "panoptic_colorize"):
+                # self.register_buffer("panoptic_colorize", torch.randn(3, 133, 1, 1).to(x))
+                self.register_buffer("panoptic_colorize", torch.arange(3 * 133).reshape(3, 133, 1, 1).to(x))
+            if not hasattr(self, "face_colorize"):
+                # self.register_buffer("face_colorize", torch.randn(3, 5, 1, 1).to(x))
+                self.register_buffer("face_colorize", torch.arange(3 * 5).reshape(3, 5, 1, 1).to(x))
+
+            if bruh:
+                panoptic_part = self.one_hot(x[:, :133, :, :])
+                human_part = self.one_hot(x[:, 133:133+20, :, :])
+                face_part = self.one_hot(x[:, 133+20:133+20+5, :, :])
+                edge_part = x[:, 133+20+5:133+20+5+1, :, :]
+            else:
+                panoptic_part = x[:, :133, :, :]
+                human_part = x[:, 133:133+20, :, :]
+                face_part = x[:, 133+20:133+20+5, :, :]
+                edge_part = x[:, 133+20+5:133+20+5+1, :, :]
+
+            panoptic_x = F.conv2d(panoptic_part, weight=self.panoptic_colorize)
+            panoptic_x = 2. * (panoptic_x - x.min()) / (panoptic_x.max() - panoptic_x.min()) - 1.
+
+            human_x = F.conv2d(human_part, weight=self.human_colorize)
+            human_x = 2. * (human_x - x.min()) / (human_x.max() - human_x.min()) - 1.
+
+            face_x = F.conv2d(face_part, weight=self.face_colorize)
+            face_x = 2. * (face_x - x.min()) / (face_x.max() - face_x.min()) - 1.
+
+            return torch.cat((panoptic_x, human_x, face_x), dim=0)
+        else:
+            if not hasattr(self, "colorize"):
+                self.register_buffer("human_colorize", torch.randn(3, x.shape[1], 1, 1).to(x))
+            x = F.conv2d(x, weight=self.colorize)
+            x = 2. * (x - x.min()) / (x.max() - x.min()) - 1.
+            return x
 
     @torch.no_grad()
-    def log_images(self, seg, seg_rec):
-        seg_rec = torch.argmax(seg_rec, dim=1, keepdim=True)
-        seg_rec = F.one_hot(seg_rec, num_classes=seg.shape[1])
-        seg_rec = seg_rec.squeeze(1).permute(0, 3, 1, 2).float()
-        return self.to_rgb(seg), self.to_rgb(seg_rec)
+    def one_hot(self, x):
+        _x = torch.argmax(x, dim=1, keepdim=True)
+        _x = F.one_hot(_x, num_classes=x.shape[1])
+        _x = _x.squeeze(1).permute(0, 3, 1, 2).float()
+        return _x
 
 
 def train(args):

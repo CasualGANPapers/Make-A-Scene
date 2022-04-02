@@ -1,7 +1,10 @@
 import torch
+import numpy as np
 import cv2
-from skimage import io
 import face_alignment
+import ssl
+import matplotlib.pyplot as plt
+ssl._create_default_https_context = ssl._create_unverified_context
 
 BEARD = 0
 BROW = 1
@@ -18,9 +21,7 @@ class FaceAlignmentPreprocessor:
     last_mouth = 68
 
     def __init__(self, n_classes=5, device="cuda"):
-        self.fa = face_alignment.FaceAlignment(
-            face_alignment.LandmarksType._2D, device=device
-        )
+        self.fa = face_alignment.FaceAlignment(face_alignment.LandmarksType._2D, device=device)
         self.n_classes = n_classes
         self.class_idxs = {
             BEARD: torch.arange(0, self.last_beard),
@@ -29,6 +30,25 @@ class FaceAlignmentPreprocessor:
             EYE: torch.arange(self.last_nose, self.last_eye),
             MOUTH: torch.arange(self.last_eye, self.last_mouth),
         }
+
+    def interpolate_face(self, face):
+        interpolation = []
+        for class_id in range(self.n_classes):
+            part_interpolation = []
+            part = face[self.class_idxs[class_id]]
+            for idx, (i, j) in enumerate(zip(part, part[1:])):
+                if self.class_idxs[class_id][idx] in (21, 41):  # to avoid that both eyes (or both brows) are connected
+                    continue
+                # print(self.class_idxs[class_id][idx])
+                part_interpolation.extend(
+                    list(np.round(np.linspace(i, j, 100)).astype(np.int)) +
+                    list(np.round(np.linspace(i, j, 100)).astype(np.int) + [0, 1]) +
+                    list(np.round(np.linspace(i, j, 100)).astype(np.int) + [0, -1]) +
+                    list(np.round(np.linspace(i, j, 100)).astype(np.int) + [1, 0]) +
+                    list(np.round(np.linspace(i, j, 100)).astype(np.int) + [-1, 0])
+                )
+            interpolation.append(part_interpolation)
+        return interpolation
 
     def process_image(self, img):
         img = img[:, :, ::-1]  # face_alignment work with BGR colorspace
@@ -45,17 +65,39 @@ class FaceAlignmentPreprocessor:
                     except IndexError:
                         # Probably only part of the face on the image
                         pass
-        return seg_mask
+        return seg_mask  # F.one_hot(seg_mask.to(torch.long), num_classes=6)[..., 1:].permute(2, 0, 1)
+
+    def process_image_interpolated(self, img):
+        img = img[:, :, ::-1]  # face_alignment work with BGR colorspace
+        points = self.fa.get_landmarks(img)
+        seg_mask = torch.zeros(*img.shape[:-1])
+        if points is None:
+            return seg_mask
+        for face in points:
+            face = self.interpolate_face(face.astype(int))
+            for class_id in range(self.n_classes):
+                for point in face[class_id]:
+                    try:
+                        seg_mask[point[1], point[0]] = class_id + 1
+                    except IndexError as e:
+                        # Probably only part of the face on the image
+                        print(e)
+                        pass
+        return seg_mask  # F.one_hot(seg_mask.to(torch.long), num_classes=6)[..., 1:].permute(2, 0, 1)
+
+    def plot_face(self, seg_mask: torch.Tensor):
+        plt.imshow(seg_mask.clamp(0, 1).detach().cpu().numpy(), cmap="gray")
+        plt.show()
 
     def __call__(self, img):
-        return self.process_image(img)
+        return self.process_image_interpolated(img)
 
 
 if __name__ == "__main__":
     face_alignment_preprocessor = FaceAlignmentPreprocessor()
-    img = cv2.imread("test.png")  #  cv2 has other order of channels.
-    # img = io.imread("test.png")
+    img = cv2.imread("greg2.jpg")  # cv2 has other order of channels.
     print(img.shape)
     alignment = face_alignment_preprocessor(img)
+    face_alignment_preprocessor.plot_face(alignment)
     print(alignment.shape)
     torch.save(alignment, "alignment.pth")
