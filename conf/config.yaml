@@ -1,0 +1,66 @@
+mode: pretrain_segmentation
+devices: 
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+
+total_steps: 6000000
+accumulate_grad: 3
+resume: True
+checkpoint: ./outputs/2022-04-03/19-00-36/checkpoint.pt
+log_period: 50
+
+model:
+  _target_: models.VQBASE
+  embed_dim: 256
+  n_embed: 1024
+  image_key: "segmentation"
+    #n_labels: 182
+  ddconfig:
+    double_z: false
+    z_channels: 256
+    resolution: 256
+    in_channels: 159
+    out_ch: 159
+    ch: 128
+    ch_mult:
+    - 1
+    - 1
+    - 2
+    - 2
+    - 4
+    num_res_blocks: 2
+    attn_resolutions:
+    - 16
+    dropout: 0.0
+
+optimizer:
+  lr: 4.5e-6
+  betas:
+    - 0.5
+    - 0.9
+
+dataset:
+  _target_: Data.dataset_preprocessor.COCO2014Dataset
+  root: "/path_to_coco"
+  preprocessed_folder: "/path_to_preprocessed_folder"
+  force_preprocessing: False
+
+loss:
+  #_target_: losses.VQVAEWithBCELoss
+  _target_: losses.BCELossWithQuant
+
+dataloader:
+  batch_size: 2
+  num_workers: 8
+  shuffle: True
+  pin_memory: True
+
+hydra:
+  run:
+    dir: ./outputs/${mode}/${now:%Y-%m-%d}/${now:%H-%M-%S}
