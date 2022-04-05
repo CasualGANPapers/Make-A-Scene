@@ -1,59 +1,57 @@
-mode: pretrain_segmentation
+mode: pretrain_image
 devices: 
   - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  - 5
-  - 6
-  - 7
 
-total_steps: 6000000
+total_steps: 8000000
 accumulate_grad: 3
-resume: True
+resume: False
 checkpoint: ./outputs/2022-04-03/19-00-36/checkpoint.pt
 log_period: 50
+batch_size: 2  # 192
 
 model:
   _target_: models.VQBASE
   embed_dim: 256
-  n_embed: 1024
-  image_key: "segmentation"
-    #n_labels: 182
+  n_embed: 1024  # 8192
   ddconfig:
     double_z: false
     z_channels: 256
     resolution: 256
-    in_channels: 159
-    out_ch: 159
+    in_channels: 3
+    out_ch: 3
     ch: 128
-    ch_mult:
-    - 1
-    - 1
-    - 2
-    - 2
-    - 4
+    ch_mult: [1,1,2,2,4]  # [1, 1, 2, 4, 4]
     num_res_blocks: 2
     attn_resolutions:
     - 16
     dropout: 0.0
 
 optimizer:
-  lr: 4.5e-6
-  betas:
-    - 0.5
-    - 0.9
+  vq:
+    lr: 4.5e-6
+    betas:
+      - 0.5
+      - 0.9
+  disc:
+    lr: 4.5e-6
+    betas:
+      - 0.5
+      - 0.9
 
 dataset:
   _target_: Data.dataset_preprocessor.COCO2014Dataset
-  root: "/path_to_coco"
-  preprocessed_folder: "/path_to_preprocessed_folder"
+  root: "D:\\PycharmProjects\\Make-A-Scene\\Data\\coco\\tmpdb_2\\"
+  preprocessed_folder: "D:\\PycharmProjects\\Make-A-Scene\\Data\\coco\\tmpdb_2\\preprocessed_folder"
   force_preprocessing: False
 
 loss:
   #_target_: losses.VQVAEWithBCELoss
-  _target_: losses.BCELossWithQuant
+  _target_: losses.VQLPIPSWithDiscriminator
+  disc_conditional: False
+  disc_in_channels: 3
+  disc_start: 250001
+  disc_weight: 0.8
+  codebook_weight: 1.0
 
 dataloader:
   batch_size: 2

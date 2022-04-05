@@ -8,31 +8,32 @@ import hydra
 from utils import Logger, Visualizer
 import os
 
-def train(proc_id, cfg,):
+
+def train(proc_id, cfg):
     print(proc_id)
-    parallel = len(cfg.devices)>1
+    parallel = len(cfg.devices) > 1
     if parallel:
         torch.cuda.set_device(proc_id)
         torch.backends.cudnn.benchmark = True
         dist.init_process_group(backend="nccl", init_method="env://", world_size=len(cfg.devices), rank=proc_id)
     device = torch.device(proc_id)
+    model = hydra.utils.instantiate(cfg.model).to(device)
+    if cfg.resume:
+        state_dict = torch.load(cfg.checkpoint, map_location=device)
+        model.load_state_dict(state_dict)
+    if parallel:
+        model = DistributedDataParallel(model, device_ids=[device], output_device=device)
+    dataset = hydra.utils.instantiate(cfg.dataset)
+    loss_fn = hydra.utils.instantiate(cfg.loss).to(device)
+    logger = Logger(proc_id, device=device)
 
+    dataloader = DataLoader(dataset, **cfg.dataloader, )
+    step = 0
+    epochs = cfg.total_steps * cfg.batch_size * cfg.accumulate_grad // len(dataset) + 1
+    
     if cfg.mode == "pretrain_segmentation":
-        model = hydra.utils.instantiate(cfg.model).to(device)
-        if cfg.resume:
-            state_dict = torch.load(cfg.checkpoint, map_location=device)
-            model.load_state_dict(state_dict)
-        if parallel:
-            model = DistributedDataParallel(model, device_ids=[device], output_device=device)
         optim = torch.optim.Adam(model.parameters(), **cfg.optimizer)
-        dataset = hydra.utils.instantiate(cfg.dataset)
-        loss_fn = hydra.utils.instantiate(cfg.loss).to(device)
-        logger = Logger(proc_id, device=device)
-
-        dataloader = DataLoader(dataset, **cfg.dataloader,)
-        step = 0
-        epochs = cfg.total_steps*cfg.batch_size*cfg.accumulate_grad//len(dataset) + 1
-        for epoch in  range(epochs):
+        for epoch in range(epochs):
             print(f"Epoch {epoch} out of {epochs}")
             pbar = dataloader if proc_id else tqdm(dataloader)
             for data in pbar:
@@ -43,7 +44,7 @@ def train(proc_id, cfg,):
 
                 if step % cfg.log_period == 0:
                     logger.log(loss, q_loss, seg, seg_rec, step)
-                    torch.save(model.module.state_dict(), "checkpoint.pt")
+                    torch.save(model.state_dict(), "checkpoint.pt")
 
                 loss.backward()
                 if step % cfg.accumulate_grad == 0:
@@ -52,8 +53,39 @@ def train(proc_id, cfg,):
                     optim.zero_grad()
 
                 if step == cfg.total_steps:
-                    torch.save(model.module.state_dict(), "final.pt")
+                    torch.save(model.state_dict(), "final.pt")
                     return
+                
+    elif cfg.mode == "pretrain_image":
+        vq_optim = torch.optim.Adam(model.parameters(), **cfg.optimizer.vq)
+        disc_optim = torch.optim.Adam(model.parameters(), **cfg.optimizer.disc)
+
+        for epoch in range(epochs):
+            print(f"Epoch {epoch} out of {epochs}")
+            pbar = dataloader if proc_id else tqdm(dataloader)
+            for data in pbar:
+                _, seg = data
+                seg = seg.to(device)
+                seg_rec, q_loss = model(seg)
+                loss, d_loss = loss_fn(q_loss, seg, seg_rec)
+
+                if step % cfg.log_period == 0:
+                    logger.log(loss, q_loss, seg, seg_rec, step, d_loss=d_loss)
+                    torch.save(model.state_dict(), "checkpoint.pt")
+
+                loss.backward()
+                d_loss.backward()
+                if step % cfg.accumulate_grad == 0:
+                    step += 1
+                    vq_optim.step()
+                    vq_optim.zero_grad()
+                    disc_optim.step()
+                    disc_optim.zero_grad()
+
+                if step == cfg.total_steps:
+                    torch.save(model.state_dict(), "final.pt")
+                    return
+
 
 def visualize(cfg):
     device = torch.device(cfg.devices[0])
@@ -75,13 +107,12 @@ def visualize(cfg):
         img = img.to(device).unsqueeze(0)
         seg = seg.to(device).unsqueeze(0)
         seg_rec, _ = model(seg)
-        visualizer(i, image=img, seg=seg, seg_rec=seg_rec,)
-
+        visualizer(i, image=img, seg=seg, seg_rec=seg_rec, )
 
     print(model(dataset[0][1].unsqueeze(0).to(device))[0].shape)
 
 
-@hydra.main(config_path="conf", config_name="config")
+@hydra.main(config_path="conf", config_name="seg_config")
 def launch(cfg):
     if "pretrain" in cfg.mode:
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join([str(d) for d in cfg.devices])
@@ -94,7 +125,6 @@ def launch(cfg):
             p = mp.spawn(train, nprocs=len(cfg.devices), args=(cfg,))
     elif "show" in cfg.mode:
         visualize(cfg)
-            
 
 
 if __name__ == "__main__":
