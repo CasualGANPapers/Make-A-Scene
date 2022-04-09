@@ -7,7 +7,7 @@ Pytorch implementation (inofficial) of Make-A-Scene: Scene-Based Text-to-Image G
 </p>
 
 ## Note: this is work in progress. 
-Everyone is happily invited to contribute --> Discord Channel: https://discord.gg/6jkmp3ZC
+Everyone is happily invited to contribute --> Discord Channel: https://discord.gg/hCRMGRZkC6
 
 We would love to open-source a trained model. The model is a billion parameter model. Training it requires a lot of compute. If anyone can provide computational resources, let us know.
 
