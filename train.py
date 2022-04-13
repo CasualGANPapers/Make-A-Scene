@@ -23,7 +23,7 @@ def train(proc_id, cfg):
         model.load_state_dict(state_dict)
     if parallel:
         model = DistributedDataParallel(model, device_ids=[device], output_device=device)
-    dataset = hydra.utils.instantiate(cfg.dataset)
+    dataset = hydra.utils.instantiate(cfg.dataset, _recursive_=False)
     loss_fn = hydra.utils.instantiate(cfg.loss).to(device)
     logger = Logger(proc_id, device=device)
 
@@ -111,6 +111,10 @@ def visualize(cfg):
 
     print(model(dataset[0][1].unsqueeze(0).to(device))[0].shape)
 
+def preprocess_dataset(cfg):
+    dataset = hydra.utils.instantiate(cfg.dataset, _recursive_=False)
+    print(dataset[0])
+
 
 @hydra.main(config_path="conf", config_name="seg_config")
 def launch(cfg):
@@ -125,6 +129,8 @@ def launch(cfg):
             p = mp.spawn(train, nprocs=len(cfg.devices), args=(cfg,))
     elif "show" in cfg.mode:
         visualize(cfg)
+    elif "preprocess_dataset" in cfg.mode:
+        preprocess_dataset(cfg)
 
 
 if __name__ == "__main__":
