@@ -20,8 +20,9 @@ class FaceAlignmentPreprocessor:
     last_eye = 48
     last_mouth = 68
 
-    def __init__(self, n_classes=5, device="cuda"):
+    def __init__(self, n_classes=5, face_confidence=0.95, device="cuda"):
         self.fa = face_alignment.FaceAlignment(face_alignment.LandmarksType._2D, device=device)
+        self.face_confidence = face_confidence
         self.n_classes = n_classes
         self.class_idxs = {
             BEARD: torch.arange(0, self.last_beard),
@@ -41,11 +42,11 @@ class FaceAlignmentPreprocessor:
                     continue
                 # print(self.class_idxs[class_id][idx])
                 part_interpolation.extend(
-                    list(np.round(np.linspace(i, j, 100)).astype(np.int)) +
-                    list(np.round(np.linspace(i, j, 100)).astype(np.int) + [0, 1]) +
-                    list(np.round(np.linspace(i, j, 100)).astype(np.int) + [0, -1]) +
-                    list(np.round(np.linspace(i, j, 100)).astype(np.int) + [1, 0]) +
-                    list(np.round(np.linspace(i, j, 100)).astype(np.int) + [-1, 0])
+                    list(np.round(np.linspace(i, j, 100)).astype(np.int32)) +
+                    list(np.round(np.linspace(i, j, 100)).astype(np.int32) + [0, 1]) +
+                    list(np.round(np.linspace(i, j, 100)).astype(np.int32) + [0, -1]) +
+                    list(np.round(np.linspace(i, j, 100)).astype(np.int32) + [1, 0]) +
+                    list(np.round(np.linspace(i, j, 100)).astype(np.int32) + [-1, 0])
                 )
             interpolation.append(part_interpolation)
         return interpolation
@@ -69,7 +70,9 @@ class FaceAlignmentPreprocessor:
 
     def process_image_interpolated(self, img):
         img = img[:, :, ::-1]  # face_alignment work with BGR colorspace
-        points = self.fa.get_landmarks(img)
+        faces = self.fa.face_detector.detect_from_image(img.copy())
+        faces = list(filter(lambda face: face[-1] > self.face_confidence, faces))
+        points = self.fa.get_landmarks(img, detected_faces=faces)
         seg_mask = torch.zeros(*img.shape[:-1])
         if points is None:
             return seg_mask
@@ -82,7 +85,8 @@ class FaceAlignmentPreprocessor:
                     except IndexError as e:
                         # Probably only part of the face on the image
                         pass
-        return seg_mask  # F.one_hot(seg_mask.to(torch.long), num_classes=6)[..., 1:].permute(2, 0, 1)
+        boxes = [face[:-1] for face in faces]
+        return seg_mask, boxes  # F.one_hot(seg_mask.to(torch.long), num_classes=6)[..., 1:].permute(2, 0, 1)
 
     def plot_face(self, seg_mask: torch.Tensor):
         plt.imshow(seg_mask.clamp(0, 1).detach().cpu().numpy(), cmap="gray")
@@ -94,9 +98,10 @@ class FaceAlignmentPreprocessor:
 
 if __name__ == "__main__":
     face_alignment_preprocessor = FaceAlignmentPreprocessor()
-    img = cv2.imread("greg2.jpg")  # cv2 has other order of channels.
+    img = cv2.imread("test.png")  # cv2 has other order of channels.
     print(img.shape)
-    alignment = face_alignment_preprocessor(img)
-    face_alignment_preprocessor.plot_face(alignment)
+    alignment, boxes = face_alignment_preprocessor(img)
+    #face_alignment_preprocessor.plot_face(alignment)
     print(alignment.shape)
+    print(boxes)
     torch.save(alignment, "alignment.pth")

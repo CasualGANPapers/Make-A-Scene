@@ -4,10 +4,12 @@ import cv2
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
+from torch.utils.data import ConcatDataset as ConcatDataset_
 from tqdm import tqdm
 import torch.multiprocessing as mp
 import warnings
 from torchvision import transforms
+from hydra.utils import instantiate
 
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
@@ -22,12 +24,23 @@ except ModuleNotFoundError as e:
 class PreprocessedDataset(Dataset):
     def __init__(
         self,
+        name
         root=None,
         image_dirs=None,
         preprocessed_folder=None,
         force_preprocessing=True,
+        detectron2=None,
+        human_parsing=None,
+        human_face=None,
         proc_total=1,
     ):
+        self.name = name
+
+        # Preprocessing modules, required only during preprocessing or online-processing
+        self.detectron2 = detectron2
+        self.human_parsing = human_parsing
+        self.human_face = human_face
+
         self.preprocessed_folder = preprocessed_folder
         self.root = root
         self.proc_total = proc_total
@@ -43,7 +56,7 @@ class PreprocessedDataset(Dataset):
         else:
             assert os.path.isdir(preprocessed_folder)
 
-        img_names_path = os.path.join(preprocessed_folder, "img_names.npz")
+        img_names_path = os.path.join(preprocessed_folder, f"img_names_{name}.npz")
         if os.path.exists(img_names_path) and not force_preprocessing:
             self.img_names = np.load(img_names_path)["img_names"]
         else:
@@ -60,7 +73,7 @@ class PreprocessedDataset(Dataset):
                 if os.path.splitext(filename)[1] in [".jpg", ".png"]:
                     img_names.append(os.path.join(directory, filename))
         np.savez(
-            os.path.join(self.preprocessed_folder, "img_names"), img_names=img_names
+            os.path.join(self.preprocessed_folder, f"img_names_{self.name}"), img_names=img_names
         )
 
     def preprocess_dataset(self):
@@ -70,15 +83,21 @@ class PreprocessedDataset(Dataset):
                 "Do not recommended to set more processes, than you have GPUs"
             )
         if self.proc_total == 1:
-            self.detectron2 = Detectron2()
-            self.human_parsing = HumanParts()
-            self.human_face = HumanFace()
+            if self.detectron2 is None:
+                self.detectron2 = Detectron2()
+            if self.human_parsing is None:
+                self.human_parsing = HumanParts()
+            if self.human_face is None:
+                self.human_face = HumanFace()
             for img_name in tqdm(self.img_names):
                 self.preprocess_single_image(img_name)
         else:
-            self.detectron2 = [None] * self.proc_total
-            self.human_parsing = [None] * self.proc_total
-            self.human_face = [None] * self.proc_total
+            if self.detectron2 is None:
+                self.detectron2 = [None] * self.proc_total
+            if self.human_parsing is None:
+                self.human_parsing = [None] * self.proc_total
+            if self.human_face is None:
+                self.human_face = [None] * self.proc_total
             procs = []
             mp.set_start_method("spawn")
             for proc_id in range(self.proc_total):
@@ -89,12 +108,12 @@ class PreprocessedDataset(Dataset):
                 proc.join()
             self.img_names = []
             for proc_id in range(self.proc_total):
-                names = np.load(f"tmp_names_{proc_id}.npz")["names"]
-                os.remove(f"tmp_names_{proc_id}.npz")
+                names = np.load(f"tmp_names_{self.name}_{proc_id}.npz")["names"]
+                os.remove(f"tmp_names_{self.name}_{proc_id}.npz")
                 self.img_names.extend(names)
             print(len(self.img_names))
             np.savez(
-                os.path.join(self.preprocessed_folder, "img_names"), img_names=self.img_names
+                os.path.join(self.preprocessed_folder, f"img_names_{self.name}"), img_names=self.img_names
             )
 
     def preprocess_single_process(self, proc_id,):
@@ -103,9 +122,12 @@ class PreprocessedDataset(Dataset):
         torch.cuda.set_device(  # https://github.com/pytorch/pytorch/issues/21819#issuecomment-553310128
             proc_id % self.proc_total
         )
-        self.detectron2[proc_id] = Detectron2(device=device)
-        self.human_parsing[proc_id] = HumanParts(device=device)
-        self.human_face[proc_id] = HumanFace(device=device)
+        if self.detectron2[proc_id] is None:
+            self.detectron2[proc_id] = Detectron2(device=device)
+        if self.human_parsing[proc_id] is None:
+            self.human_parsing[proc_id] = HumanParts(device=device)
+        if self.human_face[proc_id] is None:
+            self.human_face[proc_id] = HumanFace(device=device)
         img_names = self.img_names[proc_id :: self.proc_total]
         bar = tqdm(img_names) if proc_id == 0 else img_names
         for img_name in bar:
@@ -124,9 +146,9 @@ class PreprocessedDataset(Dataset):
         #if image.shape[0]<256 or image.shape[1]<256:
         #    return False
 
-        seg_panoptic = detectron2(image).to(torch.int32).cpu().numpy()
+        seg_panoptic, box_thing = detectron2(image).to(torch.int32).cpu().numpy()
         seg_human = human_parsing(image).to(torch.int32).cpu().numpy()
-        seg_face = human_face(image)
+        seg_face, box_face = human_face(image)
         seg_edges = get_edges(seg_panoptic, seg_human, seg_face)
 
         seg_panoptic = np.array(seg_panoptic // 1000, dtype=np.uint8)
@@ -141,8 +163,10 @@ class PreprocessedDataset(Dataset):
             np.savez_compressed(
                 save_path,
                 seg_panoptic=seg_panoptic,
+                box_thing=box_thing,
                 seg_human=seg_human,
                 seg_face=seg_face,
+                box_face=box_face,
                 seg_edges=seg_edges,
             )
         except FileNotFoundError:
@@ -178,7 +202,7 @@ class PreprocessedDataset(Dataset):
         seg_map = torch.cat(
             [seg_panoptic, seg_human, seg_face, seg_edges], dim=-1
         )#.permute(2, 0, 1)
-        return seg_map
+        return seg_map, data["box_thing"], data["box_face"]
 
     def __getitem__(self, idx):
         img_name = self.img_names[idx]
@@ -186,10 +210,10 @@ class PreprocessedDataset(Dataset):
             segmentation = self.load_segmentation(img_name)
         except FileNotFoundError:
             self.preprocess_single_image(img_name)
-            segmentation = self.load_segmentation(img_name)
+            segmentation, box_thing, box_face = self.load_segmentation(img_name)
         image = self.get_image(img_name)
-        data = self.transforms(image=image, mask=segmentation.numpy())
-        return data["image"], data["mask"].float()
+        data = self.transforms(image=image, mask=segmentation.numpy(), bboxes=box_thing, bboxes0=box_face)
+        return data["image"], data["mask"].float(), data["bboxes"], data["bboxes0"]
 
     def get_image(self, img_name):
         raise NotImplementedError
@@ -201,8 +225,9 @@ class PreprocessedDataset(Dataset):
 class COCO2014Dataset(PreprocessedDataset):
     def __init__(self, root, preprocessed_folder, **kwargs):
         super().__init__(
+            "coco2014"
             root=root,
-            image_dirs=["images/train2014"],
+            image_dirs=["train2014"],
             preprocessed_folder=preprocessed_folder,
             **kwargs,
         )
@@ -213,6 +238,54 @@ class COCO2014Dataset(PreprocessedDataset):
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         return image
 
+
+class COCO2017Dataset(PreprocessedDataset):
+    def __init__(self, root, preprocessed_folder, **kwargs):
+        super().__init__(
+            "coco2017"
+            root=root,
+            image_dirs=["train2017"],
+            preprocessed_folder=preprocessed_folder,
+            **kwargs,
+        )
+
+    def get_image(self, img_name):
+        path = os.path.join(self.root, img_name)
+        image = cv2.imread(path)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        return image
+
+class ConcatDataset(ConcatDataset_):
+    def __init__(self, datasets_configs, proc_total=1, force_preprocessing=False, ):
+        datasets = []
+        self.detectron2 = None
+        self.human_parsing = None
+        self.human_face = None
+        if force_preprocessing:
+            if proc_total == 1:
+                self.detectron2 = Detectron2()
+                self.human_parsing = HumanParts()
+                self.human_face = HumanFace()
+        else:
+                self.detectron2 = [None] * self.proc_total
+                self.human_parsing = [None] * self.proc_total
+                self.human_face = [None] * self.proc_total
+                for proc_id in range(proc_total):
+                    device = f"cuda:{proc_id%torch.cuda.device_count()}"
+                    self.detectron2[proc_id] = Detectron2(device=device)
+                    self.human_parsing[proc_id] = HumanParts(device=device)
+                    self.human_face[proc_id] = HumanFace(device=device)
+
+
+        for config in datasets_configs:
+            dataset = instantiate(config,
+                                  force_preprocessing=force_preprocessing,
+                                  proc_total=proc_total,
+                                  detectron2=self.detectron2,
+                                  human_face=self.human_face,
+                                  human_parsing=self.human_parsing)
+            datasets.append(dataset)
+        super().__init__(datasets)
 
 if __name__ == "__main__":
     coco = COCO2014Dataset(

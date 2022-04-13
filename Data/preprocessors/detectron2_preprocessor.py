@@ -2,6 +2,7 @@ import os
 import cv2
 import torch
 import torch.nn.functional as F
+from torchvision.ops import masks_to_boxes
 import numpy as np
 import detectron2
 from detectron2.projects.panoptic_deeplab import add_panoptic_deeplab_config
@@ -36,7 +37,16 @@ class PanopticPreprocesor:
     def panoptic_seg_one_channel(self, img):
         # Returns tensor of shape [H, W] with values equal to 1000*class_id + instance_idx
         panoptic = self.predictor(img)["panoptic_seg"][0].cpu()
-        return panoptic
+        bounding_boxes = self.bounding_boxes(panoptic)
+        return panoptic, bounding_boxes
+
+    def bounding_boxes(self, panoptic):
+        obj_ids = torch.unique(panoptic)
+        thing_ids = obj_ids[obj_ids/1000 < 80] # according to panopticapi first 80 classes are "things"
+        binary_masks = panoptic == thing_ids[:, None, None]
+        boxes = masks_to_boxes(binary_masks)
+        return boxes
+
 
     def semantic_segment_one_hot(self, img):
         # Returns tensor of shape [H, W, C] with binary masks of classes.
@@ -54,8 +64,8 @@ class PanopticPreprocesor:
 
 
 if __name__ == "__main__":
-    img = cv2.imread("test.jpg")
-    detectron2 = PanopticPreprocesor(one_channel=False)
+    img = cv2.imread("test.png")
+    detectron2 = PanopticPreprocesor(one_channel=True)
     panoptic = detectron2(img)
     print(panoptic)
     torch.save(panoptic, "test.pth")

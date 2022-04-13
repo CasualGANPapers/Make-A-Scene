@@ -1,0 +1,23 @@
+mode: preprocess_dataset
+
+dataset:
+  _target_: Data.dataset_preprocessor.ConcatDataset
+  force_preprocessing: True
+  total_proc: 8
+  datasets:
+    - ${coco2014}
+    - ${coco2017}
+
+coco2014:
+  _target_: Data.dataset_preprocessor.COCO2014Dataset
+  root: "D:\\PycharmProjects\\Make-A-Scene\\Data\\coco\\tmpdb_2\\"
+  preprocessed_folder: "D:\\PycharmProjects\\Make-A-Scene\\Data\\coco\\tmpdb_2\\preprocessed_folder"
+
+coco2017:
+  _target_: Data.dataset_preprocessor.COCO2017Dataset
+  root: "D:\\PycharmProjects\\Make-A-Scene\\Data\\coco\\tmpdb_2\\"
+  preprocessed_folder: "D:\\PycharmProjects\\Make-A-Scene\\Data\\coco\\tmpdb_2\\preprocessed_folder"
+
+hydra:
+  run:
+    dir: ./outputs/${mode}/${now:%Y-%m-%d}/${now:%H-%M-%S}
