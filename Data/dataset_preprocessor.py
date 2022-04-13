@@ -9,10 +9,14 @@ import torch.multiprocessing as mp
 import warnings
 from torchvision import transforms
 
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+
 try:
-    from preprocessors import Detectron2, HumanParts, HumanFace, get_edges
-except ModuleNotFoundError:
-    print("Missing some dependecies, required for data preprocessing.")
+    from .preprocessors import Detectron2, HumanParts, HumanFace, get_edges
+except ModuleNotFoundError as e:
+    #print("Missing some dependecies, required for data preprocessing:", e)
+    pass
 
 
 class PreprocessedDataset(Dataset):
@@ -27,10 +31,12 @@ class PreprocessedDataset(Dataset):
         self.preprocessed_folder = preprocessed_folder
         self.root = root
         self.proc_total = proc_total
-        self.transforms = transforms.Compose([
-            transforms.RandomCrop((256, 256)),
-            # transforms.CenterCrop((256, 256))
-        ])
+        self.transforms = A.Compose([
+                                    A.SmallestMaxSize(256),
+                                    A.RandomCrop(256, 256, always_apply=True),
+                                    A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+                                    ToTensorV2(transpose_mask=True)
+                                    ])
 
         if not os.path.exists(preprocessed_folder):
             os.makedirs(preprocessed_folder)
@@ -59,7 +65,7 @@ class PreprocessedDataset(Dataset):
 
     def preprocess_dataset(self):
         assert torch.cuda.is_available(), "GPU required for preprocessing"
-        if self.proc_total < torch.cuda.device_count():
+        if self.proc_total > torch.cuda.device_count():
             warnings.warn(
                 "Do not recommended to set more processes, than you have GPUs"
             )
@@ -115,8 +121,8 @@ class PreprocessedDataset(Dataset):
         human_face = self.human_face if proc_id is None else self.human_face[proc_id]
 
         image = cv2.imread(os.path.join(self.root, img_name))
-        if image.shape[0]<256 or image.shape[1]<256:
-            return False
+        #if image.shape[0]<256 or image.shape[1]<256:
+        #    return False
 
         seg_panoptic = detectron2(image).to(torch.int32).cpu().numpy()
         seg_human = human_parsing(image).to(torch.int32).cpu().numpy()
@@ -171,7 +177,7 @@ class PreprocessedDataset(Dataset):
 
         seg_map = torch.cat(
             [seg_panoptic, seg_human, seg_face, seg_edges], dim=-1
-        ).permute(2, 0, 1)
+        )#.permute(2, 0, 1)
         return seg_map
 
     def __getitem__(self, idx):
@@ -181,8 +187,12 @@ class PreprocessedDataset(Dataset):
         except FileNotFoundError:
             self.preprocess_single_image(img_name)
             segmentation = self.load_segmentation(img_name)
-        segmentation = self.transforms(segmentation)
-        return img_name, segmentation.type(torch.FloatTensor)
+        image = self.get_image(img_name)
+        data = self.transforms(image=image, mask=segmentation.numpy())
+        return data["image"], data["mask"].float()
+
+    def get_image(self, img_name):
+        raise NotImplementedError
 
     def __len__(self):
         return len(self.img_names)
@@ -197,10 +207,16 @@ class COCO2014Dataset(PreprocessedDataset):
             **kwargs,
         )
 
+    def get_image(self, img_name):
+        path = os.path.join(self.root, img_name)
+        image = cv2.imread(path)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        return image
+
 
 if __name__ == "__main__":
     coco = COCO2014Dataset(
-        "../../../tmpdb/", "../../../tmpdb/preprocessed_folder", proc_total=8
+        "/path_to_coco", "/path_to_preprocessed_folder", proc_total=8
     )
     print(coco[1])
 1

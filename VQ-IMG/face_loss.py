@@ -93,7 +93,7 @@ class ResNet(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
 
-        self.channels = [64, 256, 512, 2048, 2048]
+        self.channels = [64, 256, 512, 1024, 2048]
         self.lins = nn.ModuleList([
             NetLinLayer(self.channels[0]),
             NetLinLayer(self.channels[1]),
@@ -135,15 +135,16 @@ class ResNet(nn.Module):
         features.append(x)
         x = self.layer2(x)  # 28x28
         features.append(x)
-        x = self.layer3(x)  # 14x14 ignore
+        x = self.layer3(x)  # 14x14 ignore (maybe not)
+        features.append(x)
         x = self.layer4(x)  # 7x7
         features.append(x)
 
-        x = self.avgpool(x)  # 1x1
-        features.append(x)
-        
         if not self.include_top:
             return features
+
+        x = self.avgpool(x)  # 1x1
+        features.append(x)
         
         x = x.view(x.size(0), -1)
         x = self.fc(x)
@@ -166,6 +167,7 @@ class ResNet(nn.Module):
         """
         true_features = self(x)
         rec_features = self(x_rec)
+
         # diffs = [a*torch.abs(self.norm_tensor(tf) - self.norm_tensor(rf)) for a, tf, rf in zip(self.alphas, true_features, rec_features)]
         diffs = [a*torch.abs(tf - rf) for a, tf, rf in zip(self.alphas, true_features, rec_features)]
         return sum([net_layer(self.spatial_average(diff)) for net_layer, diff in zip(self.lins, diffs)])
@@ -180,6 +182,8 @@ def resnet50(**kwargs):
 
 if __name__ == '__main__':
     model = resnet50()
-    x = torch.randn(1, 3, 500, 500)
-    x_rec = torch.randn(1, 3, 500, 500)
+    # x = torch.randn(1, 3, 256, 256)
+    # x_rec = torch.randn(1, 3, 256, 256)
+    x = torch.randn(1, 3, 101, 101)
+    x_rec = torch.randn(1, 3, 101, 101)
     print(model.face_loss(x, x_rec))

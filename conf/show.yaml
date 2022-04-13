@@ -1,0 +1,40 @@
+mode: show_segmentation
+devices: 
+  - 0
+
+checkpoint: ./outputs/pretrain_segmentation/2022-04-04/16-40-10/checkpoint.pt
+
+model:
+  _target_: models.VQBASE
+  embed_dim: 256
+  n_embed: 1024
+  image_key: "segmentation"
+    #n_labels: 182
+  ddconfig:
+    double_z: false
+    z_channels: 256
+    resolution: 256
+    in_channels: 159
+    out_ch: 159
+    ch: 128
+    ch_mult:
+    - 1
+    - 1
+    - 2
+    - 2
+    - 4
+    num_res_blocks: 2
+    attn_resolutions:
+    - 16
+    dropout: 0.0
+
+
+dataset:
+  _target_: Data.dataset_preprocessor.COCO2014Dataset
+  root: "/path_to_coco"
+  preprocessed_folder: "/path_to_preprocessed_folder"
+  force_preprocessing: False
+
+hydra:
+  run:
+    dir: ./outputs/${mode}/${now:%Y-%m-%d}/${now:%H-%M-%S}
