@@ -5,15 +5,17 @@ import torch
 import torch.nn.functional as F
 import torchvision.transforms as transforms
 
-HUMAN_PARSER_DIR = "../../../Self-Correction-Human-Parsing"
+HUMAN_PARSER_DIR = "/home/silent/hdd/nets/Self-Correction-Human-Parsing"
 sys.path.append(HUMAN_PARSER_DIR)
 import networks
 from simple_extractor import get_palette, dataset_settings
 from collections import OrderedDict
 from utils.transforms import transform_logits, get_affine_transform
+from .edge_extractor import get_edges
 
 
 class HumanPartsPreprocessor:
+    proc_type = "human"
     def __init__(
         self,
         weights=HUMAN_PARSER_DIR + "/checkpoints/final.pth",
@@ -94,12 +96,16 @@ class HumanPartsPreprocessor:
         logits_result = transform_logits(
             upsample_output.data.cpu().numpy(), c, s, w, h, input_size=self.input_size
         )
-        parsing_result = np.argmax(logits_result, axis=2)
-        encoded = torch.from_numpy(parsing_result)
-        return encoded
+        mask = np.argmax(logits_result, axis=2)
+        return mask
 
     def __call__(self, image):
-        return self.segment_image(image)
+        data = {}
+        mask = self.segment_image(image)
+        edges = get_edges(mask)
+        data["seg_human"] = mask.astype(np.uint8)
+        data["edges"] = edges.astype(bool)
+        return data
 
 
 if __name__ == "__main__":

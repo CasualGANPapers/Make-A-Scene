@@ -14,6 +14,7 @@ MOUTH = 4
 
 
 class FaceAlignmentPreprocessor:
+    proc_type = "face"
     last_beard = 17
     last_brow = 27
     last_nose = 36
@@ -73,7 +74,7 @@ class FaceAlignmentPreprocessor:
         faces = self.fa.face_detector.detect_from_image(img.copy())
         faces = list(filter(lambda face: face[-1] > self.face_confidence, faces))
         points = self.fa.get_landmarks(img, detected_faces=faces)
-        seg_mask = torch.zeros(*img.shape[:-1])
+        seg_mask = np.zeros(img.shape[:-1])
         if points is None:
             return seg_mask
         for face in points:
@@ -93,7 +94,11 @@ class FaceAlignmentPreprocessor:
         plt.show()
 
     def __call__(self, img):
-        return self.process_image_interpolated(img)
+        data = {}
+        mask, boxes = self.process_image_interpolated(img)
+        data["seg_face"] = mask.astype(np.uint8)
+        data["box_face"] = boxes
+        return data
 
 
 if __name__ == "__main__":

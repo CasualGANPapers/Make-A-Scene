@@ -1,22 +1,33 @@
 mode: preprocess_dataset
+root: "/home/silent/hdd/nets/db/mydb"
+preprocessed: "/home/silent/hdd/nets/db/mydb/preprocessed"
+
+preprocessor:
+  _target_: Data.BasePreprocessor
+  preprocessed_folder: ${preprocessed}
+  devices:
+          - 0
+  proc_per_gpu:
+          panoptic: 1
+          human: 0
+          face: 0
 
 dataset:
   _target_: Data.dataset_preprocessor.ConcatDataset
-  force_preprocessing: True
-  total_proc: 8
   datasets:
     - ${coco2014}
     - ${coco2017}
 
 coco2014:
   _target_: Data.dataset_preprocessor.COCO2014Dataset
-  root: "D:\\PycharmProjects\\Make-A-Scene\\Data\\coco\\tmpdb_2\\"
-  preprocessed_folder: "D:\\PycharmProjects\\Make-A-Scene\\Data\\coco\\tmpdb_2\\preprocessed_folder"
+  root: ${root}
+  preprocessed_folder: ${preprocessed}
 
 coco2017:
   _target_: Data.dataset_preprocessor.COCO2017Dataset
-  root: "D:\\PycharmProjects\\Make-A-Scene\\Data\\coco\\tmpdb_2\\"
-  preprocessed_folder: "D:\\PycharmProjects\\Make-A-Scene\\Data\\coco\\tmpdb_2\\preprocessed_folder"
+  root: ${root}
+  preprocessed_folder: ${preprocessed}
+
 
 hydra:
   run:
