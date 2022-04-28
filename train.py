@@ -73,7 +73,7 @@ def train(proc_id, cfg):
                     logger.log(loss, q_loss, seg, seg_rec, step, d_loss=d_loss)
                     torch.save(model.state_dict(), "checkpoint.pt")
 
-                loss.backward()
+                loss.backward(retain_graph=True)
                 d_loss.backward()
                 if step % cfg.accumulate_grad == 0:
                     step += 1
