@@ -11,38 +11,31 @@ import torch.multiprocessing as mp
 import warnings
 from torchvision import transforms
 from hydra.utils import instantiate
-
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
-
 from urllib.request import urlretrieve
-
-try:
-    from .preprocessors import Detectron2, HumanParts, HumanFace, get_edges
-except ModuleNotFoundError as e:
-    #print("Missing some dependecies, required for data preprocessing:", e)
-    pass
 
 
 class PreprocessedDataset(Dataset):
     def __init__(
-        self,
-        root=None,
-        image_dirs=None,
-        preprocessed_folder=None,
+            self,
+            root=None,
+            image_dirs=None,
+            preprocessed_folder=None,
     ):
         self.image_dirs = image_dirs
 
         self.preprocessed_folder = preprocessed_folder
-        self.preprocessed_path = os.path.join( preprocessed_folder, "segmentations", "%s_%s.npz",)
+        self.preprocessed_path = os.path.join(preprocessed_folder, "segmentations", "%s_%s.npz", )
 
         self.root = root
         self.transforms = A.Compose([
-                                    A.SmallestMaxSize(256),
-                                    A.RandomCrop(256, 256, always_apply=True),
-                                    A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-                                    ToTensorV2(transpose_mask=True)
-                                    ])
+            A.SmallestMaxSize(256),
+            A.RandomCrop(256, 256, always_apply=True),
+            # A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            ToTensorV2(transpose_mask=True)
+        ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=["class_labels"], min_area=100, min_visibility=0.2),
+            additional_targets={"bboxes0": "bboxes"})
 
         if not os.path.exists(preprocessed_folder):
             os.makedirs(preprocessed_folder)
@@ -81,7 +74,7 @@ class PreprocessedDataset(Dataset):
         # Edges
         seg_edges = (edges_panoptic + edges_human).float()
 
-        #Face
+        # Face
         seg_face = F.one_hot(
             torch.from_numpy(data_face["seg_face"]).to(torch.long), num_classes=6
         )[..., 1:]
@@ -97,7 +90,8 @@ class PreprocessedDataset(Dataset):
     def __getitem__(self, idx):
         segmentation, box_thing, box_face = self.load_segmentation(idx)
         image, _ = self.get_image(idx)
-        data = self.transforms(image=image, mask=segmentation, bboxes=box_thing, bboxes0=box_face)
+        data = self.transforms(image=image, mask=segmentation, bboxes=box_thing, bboxes0=box_face,
+                               class_labels=np.zeros(box_thing.shape[0]))
         return data["image"], data["mask"], data["bboxes"], data["bboxes0"], self.img_names[idx]
 
     def get_image(self, idx):
@@ -130,6 +124,7 @@ class BaseCOCODataset(PreprocessedDataset):
 class COCO2014Dataset(BaseCOCODataset):
     name = "coco2014"
     image_dirs = "train2014"
+
     def __init__(self, root, preprocessed_folder, **kwargs):
         super().__init__(
             root=root,
@@ -142,6 +137,7 @@ class COCO2014Dataset(BaseCOCODataset):
 class COCO2017Dataset(BaseCOCODataset):
     name = "coco2017"
     image_dirs = "train2017"
+
     def __init__(self, root, preprocessed_folder, **kwargs):
         super().__init__(
             root=root,
@@ -153,6 +149,7 @@ class COCO2017Dataset(BaseCOCODataset):
 
 class Conceptual12mDataset(PreprocessedDataset):
     name = "cc12m"
+
     def __init__(self, root, preprocessed_folder, **kwargs):
         super().__init__(
             root=root,
@@ -166,10 +163,8 @@ class Conceptual12mDataset(PreprocessedDataset):
             for i, line in enumerate(urllist):
                 url, caption = line.split("\t")
                 caption = caption.strip()
-                img_names.append(caption+".jpg")
+                img_names.append(caption + ".jpg")
         np.savez(self.img_names_path, img_names=img_names, img_urls=img_urls)
-
-
 
     def get_image(self, idx):
         img_name = self.img_names[idx]
@@ -179,8 +174,6 @@ class Conceptual12mDataset(PreprocessedDataset):
         image = cv2.imread(path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         return image, img_name
-
-
 
     def download_image(self, url, image_name):
         try:
@@ -212,6 +205,12 @@ class ConcatDataset(ConcatDataset_):
 
 if __name__ == "__main__":
     coco = COCO2014Dataset(
-        "/path_to_coco", "/path_to_preprocessed_folder", proc_total=8
+        "./mydb", "./mydb/preprocessed"
     )
-    print(coco[0])
+    from torchvision.utils import draw_bounding_boxes
+    import matplotlib.pyplot as plt
+
+    img, _, ft, fb, _ = coco[0]
+    plt.imshow(draw_bounding_boxes(img, torch.tensor(ft + fb)).permute(1, 2, 0))
+    plt.show()
+    print()
