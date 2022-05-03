@@ -5,7 +5,7 @@ from torch.nn.parallel import DistributedDataParallel
 import torch.multiprocessing as mp
 from tqdm import tqdm
 import hydra
-from utils import Logger, Visualizer
+from log_utils import Logger, Visualizer
 import os
 
 
@@ -112,7 +112,9 @@ def visualize(cfg):
     print(model(dataset[0][1].unsqueeze(0).to(device))[0].shape)
 
 def preprocess_dataset(cfg):
-    dataset = hydra.utils.instantiate(cfg.dataset, _recursive_=False)
+    dataset = hydra.utils.instantiate(cfg.dataset,)
+    preprocessor = hydra.utils.instantiate(cfg.preprocessor)
+    preprocessor(dataset)
     print(dataset[0])
 
 
