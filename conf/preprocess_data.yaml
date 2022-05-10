@@ -8,9 +8,13 @@ preprocessor:
   devices:
           - 0
   proc_per_gpu:
-          panoptic: 1
+          panoptic: 0
           human: 0
           face: 0
+  proc_per_cpu:
+          panoptic: 1
+          human: 1
+          face: 1
 
 dataset:
   _target_: Data.dataset_preprocessor.ConcatDataset
