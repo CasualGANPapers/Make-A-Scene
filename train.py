@@ -64,19 +64,18 @@ def train(proc_id, cfg):
             print(f"Epoch {epoch} out of {epochs}")
             pbar = dataloader if proc_id else tqdm(dataloader)
             for data in pbar:
-                _, seg = data
-                seg = seg.to(device)
-                seg_rec, q_loss = model(seg)
-                loss, d_loss = loss_fn(q_loss, seg, seg_rec)
+                img, bbox_face, bbox_obj = data
+                img = img.to(device)
+                img_rec, q_loss = model(img)
+                loss, d_loss = loss_fn(q_loss, img, img_rec, step)
 
                 if step % cfg.log_period == 0:
-                    logger.log(loss, q_loss, seg, seg_rec, step, d_loss=d_loss)
+                    logger.log(loss, q_loss, img, img_rec, step, d_loss=d_loss)
                     torch.save(model.state_dict(), "checkpoint.pt")
 
                 loss.backward()
                 d_loss.backward()
                 if step % cfg.accumulate_grad == 0:
-                    step += 1
                     vq_optim.step()
                     vq_optim.zero_grad()
                     disc_optim.step()
@@ -85,6 +84,7 @@ def train(proc_id, cfg):
                 if step == cfg.total_steps:
                     torch.save(model.state_dict(), "final.pt")
                     return
+                step += 1
 
 
 def visualize(cfg):
