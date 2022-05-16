@@ -8,19 +8,19 @@ import detectron2
 from detectron2.projects.panoptic_deeplab import add_panoptic_deeplab_config
 from detectron2.engine import DefaultPredictor
 from detectron2.config import get_cfg
+from .edge_extractor import get_edges
 
 
 class PanopticPreprocesor:
+    proc_type = "panoptic"
     def __init__(
         self,
-        one_channel=True,
-        config="../../../detectron2/projects/Panoptic-DeepLab/configs/COCO-PanopticSegmentation/panoptic_deeplab_R_52_os16_mg124_poly_200k_bs64_crop_640_640_coco_dsconv.yaml",
+        config="/home/silent/hdd/nets/detectron2/projects/Panoptic-DeepLab/configs/COCO-PanopticSegmentation/panoptic_deeplab_R_52_os16_mg124_poly_200k_bs64_crop_640_640_coco_dsconv.yaml",
         num_classes=133,
-        model_weights="model_final_5e6da2.pkl",
+        model_weights="/home/silent/hdd/nets/db/model_final_5e6da2.pkl",
         device=None,
     ):
         self.num_classes = num_classes
-        self.one_channel = one_channel
 
         cfg = get_cfg()
         print(cfg.MODEL.DEVICE)
@@ -34,11 +34,6 @@ class PanopticPreprocesor:
         print("Building model")
         self.predictor = DefaultPredictor(cfg)
 
-    def panoptic_seg_one_channel(self, img):
-        # Returns tensor of shape [H, W] with values equal to 1000*class_id + instance_idx
-        panoptic = self.predictor(img)["panoptic_seg"][0].cpu()
-        bounding_boxes = self.bounding_boxes(panoptic)
-        return panoptic, bounding_boxes
 
     def bounding_boxes(self, panoptic):
         obj_ids = torch.unique(panoptic)
@@ -47,25 +42,21 @@ class PanopticPreprocesor:
         boxes = masks_to_boxes(binary_masks)
         return boxes
 
-
-    def semantic_segment_one_hot(self, img):
-        # Returns tensor of shape [H, W, C] with binary masks of classes.
-        panoptic = self.panoptic_seg_one_channel(img)
-        return (
-            F.one_hot(panoptic // 1000, num_classes=self.num_classes).permute(2, 0, 1),
-            panoptic,
-        )
-
     def __call__(self, img):
-        if self.one_channel:
-            return self.panoptic_seg_one_channel(img)
-        else:
-            return self.semantic_segment_one_hot(img)
+        data = {}
+        # Returns tensor of shape [H, W] with values equal to 1000*class_id + instance_idx
+        panoptic = self.predictor(img)["panoptic_seg"][0].cpu()
+        bounding_boxes = self.bounding_boxes(panoptic)
+        edges = get_edges(panoptic.numpy())
+        data["seg_panoptic"] = np.array(panoptic // 1000, dtype=np.uint8)
+        data["box_things"] = bounding_boxes
+        data["edges"] =  edges.astype(bool)
+        return data
 
 
 if __name__ == "__main__":
     img = cv2.imread("test.png")
-    detectron2 = PanopticPreprocesor(one_channel=True)
+    detectron2 = PanopticPreprocesor()
     panoptic = detectron2(img)
     print(panoptic)
     torch.save(panoptic, "test.pth")

@@ -5,7 +5,7 @@ from torch.nn.parallel import DistributedDataParallel
 import torch.multiprocessing as mp
 from tqdm import tqdm
 import hydra
-from utils import Logger, Visualizer
+from log_utils import Logger, Visualizer
 import os
 
 
@@ -73,7 +73,7 @@ def train(proc_id, cfg):
                     logger.log(loss, q_loss, img, img_rec, step, d_loss=d_loss)
                     torch.save(model.state_dict(), "checkpoint.pt")
 
-                loss.backward()
+                loss.backward(retain_graph=True)
                 d_loss.backward()
                 if step % cfg.accumulate_grad == 0:
                     vq_optim.step()
@@ -112,7 +112,9 @@ def visualize(cfg):
     print(model(dataset[0][1].unsqueeze(0).to(device))[0].shape)
 
 def preprocess_dataset(cfg):
-    dataset = hydra.utils.instantiate(cfg.dataset, _recursive_=False)
+    dataset = hydra.utils.instantiate(cfg.dataset,)
+    preprocessor = hydra.utils.instantiate(cfg.preprocessor)
+    preprocessor(dataset)
     print(dataset[0])
 
 
