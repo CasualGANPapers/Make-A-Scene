@@ -1,0 +1,36 @@
+mode: preprocess_dataset
+root: "/home/silent/hdd/nets/db/shortcc/cc12m/"
+preprocessed: "/home/silent/hdd/nets/db/mydb/preprocessed"
+
+preprocessor:
+  _target_: Data.WebPreprocessor
+  preprocessed_folder: ${preprocessed}
+  devices:
+          - 0
+  proc_per_gpu:
+          panoptic: 0
+          human: 2
+          face: 0
+  proc_per_cpu:
+          panoptic: 0
+          human: 0
+          face: 0
+
+dataset:
+  _target_: Data.dataset_preprocessor_web.PreprocessedWebDataset
+  root: ${root}
+
+coco2014:
+  _target_: Data.dataset_preprocessor.COCO2014Dataset
+  root: ${root}
+  preprocessed_folder: ${preprocessed}
+
+coco2017:
+  _target_: Data.dataset_preprocessor.COCO2017Dataset
+  root: ${root}
+  preprocessed_folder: ${preprocessed}
+
+
+hydra:
+  run:
+    dir: ./outputs/${mode}/${now:%Y-%m-%d}/${now:%H-%M-%S}

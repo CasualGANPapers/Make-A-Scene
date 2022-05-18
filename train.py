@@ -112,10 +112,10 @@ def visualize(cfg):
     print(model(dataset[0][1].unsqueeze(0).to(device))[0].shape)
 
 def preprocess_dataset(cfg):
-    dataset = hydra.utils.instantiate(cfg.dataset,)
+    #dataset = hydra.utils.instantiate(cfg.dataset,)
+    dataset = cfg.dataset
     preprocessor = hydra.utils.instantiate(cfg.preprocessor)
     preprocessor(dataset)
-    print(dataset[0])
 
 
 @hydra.main(config_path="conf", config_name="seg_config")
