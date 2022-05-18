@@ -1,6 +1,6 @@
 mode: preprocess_dataset
 root: "/home/silent/hdd/nets/db/shortcc/cc12m/"
-preprocessed: "/home/silent/hdd/nets/db/mydb/preprocessed"
+preprocessed: "/home/silent/hdd/nets/db/shortcc/preprocessed"
 
 preprocessor:
   _target_: Data.WebPreprocessor
@@ -9,15 +9,15 @@ preprocessor:
           - 0
   proc_per_gpu:
           panoptic: 0
-          human: 2
-          face: 0
+          human: 0
+          face: 1
   proc_per_cpu:
           panoptic: 0
           human: 0
           face: 0
 
 dataset:
-  _target_: Data.dataset_preprocessor_web.PreprocessedWebDataset
+  _target_: Data.dataset_preprocessor_web.UnprocessedWebDataset
   root: ${root}
 
 coco2014:
