@@ -16,6 +16,7 @@ from albumentations.pytorch import ToTensorV2
 from urllib.request import urlretrieve
 from webdataset import WebDataset
 from webdataset.shardlists import split_by_node
+from webdataset.handlers import warn_and_continue
 
 class PreprocessData:
     def __init__(self, ready_queue):
@@ -32,6 +33,7 @@ class PreprocessData:
         data["tarname"] = os.path.basename(data["__url__"])
         if self.lasttar!=data["tarname"]:
             rank = os.environ["RANK"]
+            proc_type = os.environ["TYPE"]
             worker_info = torch.utils.data.get_worker_info()
             if worker_info is not None:
                 worker = worker_info.id
@@ -39,25 +41,36 @@ class PreprocessData:
                 worker = None
 
             if self.lasttar != "no":
-                self.ready_queue.put("%s/%s/processed/%s" % (rank, worker, self.lasttar))
-                self.ready_queue.put("%s/%s/started/%s" % (rank, worker, data["tarname"]))
+                self.ready_queue.put("%s/%s/processed/%s" % (rank+"-"+proc_type, worker, self.lasttar))
                 print(self.lasttar, "processed!")
+            self.ready_queue.put("%s/%s/started/%s" % (rank+"-"+proc_type, worker, data["tarname"]))
             self.lasttar = data["tarname"]
         return data
 
 class UnprocessedWebDataset(WebDataset):
-    def __init__(self, root, *args, ready_queue=None, **kwargs):
-        shards = [os.path.join(root, filename) for filename in os.listdir(root) if os.path.splitext(filename)[1]==".tar"]
-        super().__init__(shards, *args, nodesplitter=split_by_node, **kwargs)
+    def __init__(self, root, *args, is_dir=False, ready_queue=None, **kwargs):
+        if is_dir:
+            shards = [os.path.join(root, filename) for filename in os.listdir(root) if os.path.splitext(filename)[1]==".tar"]
+            shards.sort()
+            self.basedir = root
+        else:
+            shards = root
+            self.basedir = os.path.dirname(root)
+        super().__init__(shards, *args, nodesplitter=split_by_node, handlers=warn_and_continue **kwargs)
         self.decode("rgb")
         self.map(PreprocessData(ready_queue))
         self.to_tuple("__key__", "tarname", "jpg")
 
 class ProcessData:
     def __init__(self,):
+        self.pretransforms = A.Compose([
+            A.SmallestMaxSize(512),
+            A.CenterCrop(512, 512, always_apply=True),
+        ])
         self.transforms = A.Compose([
-            A.SmallestMaxSize(256),
-            A.RandomCrop(256, 256, always_apply=True),
+            #A.SmallestMaxSize(512),
+            #A.CenterCrop(512, 512, always_apply=True),
+            #A.RandomCrop(256, 256, always_apply=True),
             # A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
             ToTensorV2(transpose_mask=True)
         ], bbox_params=A.BboxParams(format='pascal_voc', min_area=100, min_visibility=0.2),
@@ -96,6 +109,7 @@ class ProcessData:
             [seg_panoptic, seg_human, seg_face, seg_edges], dim=-1
         ).numpy()
 
+        data["jpg"] = self.pretransforms(image=data["jpg"])["image"]
         transformed_data = self.transforms(image=data["jpg"], bboxes=box_thing, bboxes0=box_face,)
         data["jpg"] = transformed_data["image"]
         data["mask"] = seg_map
@@ -104,13 +118,16 @@ class ProcessData:
         return data
 
 class PreprocessedWebDataset(WebDataset):
-    def __init__(self, root, *args, **kwargs):
-        shards = [os.path.join(root, filename) for filename in os.listdir(root) if os.path.splitext(filename)[1]==".tar"]
-        super().__init__(shards, *args, nodesplitter=split_by_node, **kwargs)
+    def __init__(self, url, *args, **kwargs):
+        super().__init__(url, *args, nodesplitter=split_by_node, **kwargs)
         self.decode("rgb")
         #self.decode("npz")
         self.map(ProcessData())
         self.to_tuple("jpg", "mask", "box_things", "box_face", "txt")
+
+class COCOWebDataset(PreprocessedWebDataset):
+    def __init__(self, *args, **kwargs):
+        super().__init__("pipe:aws s3 cp s3://s-mas/coco_processed/{00000..00010}.tar -", *args, **kwargs)
 
 
 if __name__ == "__main__":

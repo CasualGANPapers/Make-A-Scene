@@ -12,7 +12,8 @@ import networks
 from simple_extractor import get_palette, dataset_settings
 from collections import OrderedDict
 from utils.transforms import get_affine_transform
-from edge_extractor import get_edges
+from .edge_extractor import get_edges
+import torchvision
 
 
 def transform_logits(logits, center, scale, width, height, input_size):
@@ -76,26 +77,28 @@ class HumanPartsPreprocessor:
 
     def segment_image(self, imgs: np.array):
         # imgs should be numpy b x c x h x w
-        imgs = torch.Tensor(imgs)
+        #imgs = torch.Tensor(imgs)
         b, _, h, w = imgs.shape  # we can assume b x 3 x 512 x 512
                                  # check if h, w in correct order
         # Get person center and scale
-        person_center, scale = self._box2cs([0, 0, w - 1, h - 1])
-        c = person_center
-        s = scale
-        r = 0
-        trans = torch.Tensor(get_affine_transform(person_center, s, r, self.input_size)).expand(b, -1, -1)
-        imgs = warp_affine(imgs, trans, (int(self.input_size[1]), int(self.input_size[0])))
+        #person_center, scale = self._box2cs([0, 0, w - 1, h - 1])
+        #c = person_center
+        #s = scale
+        #r = 0
+        #trans = torch.Tensor(get_affine_transform(person_center, s, r, self.input_size)).expand(b, -1, -1)
+        #imgs = warp_affine(imgs, trans, (int(self.input_size[1]), int(self.input_size[0])))
+        imgs = torchvision.transforms.functional.resize(imgs, [self.input_size[1], self.input_size[0]])
 
-        imgs = self.transform(imgs).to(self.device)
+        imgs = self.transform(imgs/255.).to(self.device)
 
         with torch.no_grad():
             output = self.model(imgs)
         upsample_output = self.upsample(output[0][-1])  # reshapes from 1, 20, 119, 119 to 1, 20, 473, 473
 
-        logits_result = transform_logits(upsample_output.cpu(), c, s, w, h, input_size=self.input_size)
+        #logits_result = transform_logits(upsample_output.cpu(), c, s, w, h, input_size=self.input_size)
+        logits_result = torchvision.transforms.functional.resize(upsample_output, [h, w])
         mask = logits_result.argmax(dim=1)
-        return mask.numpy()
+        return mask.cpu().numpy()
 
     def __call__(self, imgs):
         data = {}

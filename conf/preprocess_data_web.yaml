@@ -1,16 +1,31 @@
 mode: preprocess_dataset
-root: "/home/silent/hdd/nets/db/shortcc/cc12m/"
-preprocessed: "/home/silent/hdd/nets/db/shortcc/preprocessed"
+#root: "/home/ubuntu/MakeAScene/data/coco/mscoco"
+root: "pipe:aws s3 cp s3://s-mas/cc12m/{00000..00621}.tar  -"
+preprocessed: "/home/ubuntu/data/cc12m_tmp/"
+output_folder: "cc12m_dataset"
 
 preprocessor:
   _target_: Data.WebPreprocessor
   preprocessed_folder: ${preprocessed}
+  output_folder: ${output_folder}
+  batch_size: 32
+  num_workers: 2
+  machines_total: 1
+  machine_idx: 0
   devices:
-          - 0
+          - 9
   proc_per_gpu:
-          panoptic: 0
-          human: 0
-          face: 1
+          panoptic:
+                  -  4
+                  -  5
+                  -  6
+                  -  7
+          human:
+                  -  2
+                  -  3
+          face:
+                  -  0
+                  -  1
   proc_per_cpu:
           panoptic: 0
           human: 0

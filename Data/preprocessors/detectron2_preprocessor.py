@@ -10,7 +10,7 @@ from detectron2.engine import DefaultPredictor
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import get_cfg
 from detectron2.modeling import build_model
-from edge_extractor import get_edges
+from .edge_extractor import get_edges
 
 
 def masks_to_boxes(masks: torch.Tensor) -> torch.Tensor:
@@ -41,7 +41,7 @@ class Predictor:
     def __call__(self, imgs: np.array):
         # imgs should be numpy b x c x h x w
         with torch.no_grad():
-            imgs = torch.as_tensor(imgs.astype("float32"))
+            #imgs = torch.as_tensor(imgs.astype("float32"))
             if self.input_format == "RGB":
                 # whether the model expects BGR inputs or RGB
                 imgs = imgs.flip([1])
@@ -79,12 +79,12 @@ class PanopticPreprocesor:
     def bounding_boxes(self, panoptics):
         all_boxes = []
         for panoptic in panoptics:
-            panoptic = torch.Tensor(panoptic)
+            #panoptic = torch.Tensor(panoptic)
             obj_ids = torch.unique(panoptic)
             thing_ids = obj_ids[obj_ids/1000 < 80] # according to panopticapi first 80 classes are "things"
             binary_masks = panoptic == thing_ids[:, None, None]
             boxes = masks_to_boxes(binary_masks)
-            all_boxes.append(boxes)
+            all_boxes.append(boxes.cpu().numpy())
         return all_boxes
 
     def __call__(self, imgs: np.array):
@@ -93,8 +93,9 @@ class PanopticPreprocesor:
         # Returns tensor of shape [H, W] with values equal to 1000*class_id + instance_idx
         # panoptic = self.predictor(imgs)["panoptic_seg"][0].cpu()
         panoptic = self.predictor(imgs)
-        panoptic = list(map(lambda pan: pan["panoptic_seg"][0].cpu().numpy(), panoptic))
+        panoptic = list(map(lambda pan: pan["panoptic_seg"][0], panoptic))
         bounding_boxes = self.bounding_boxes(panoptic)
+        panoptic = list(map(lambda pan: pan.cpu().numpy(), panoptic))
         panoptic = np.array(panoptic)
         edges = get_edges(panoptic)
         data["seg_panoptic"] = np.array(panoptic // 1000, dtype=np.uint8)
