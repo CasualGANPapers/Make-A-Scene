@@ -13,6 +13,7 @@ from torchvision import transforms
 from hydra.utils import instantiate
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+<<<<<<< Updated upstream
 from urllib.request import urlretrieve
 from webdataset import WebDataset
 from webdataset.shardlists import split_by_node
@@ -27,6 +28,13 @@ def my_split_by_node(src, group=None):
     else:
         for s in src:
             yield s
+=======
+from .utils import check_bboxes
+from urllib.request import urlretrieve
+from webdataset import WebDataset
+from webdataset.shardlists import split_by_node
+
+>>>>>>> Stashed changes
 
 class PreprocessData:
     def __init__(self, ready_queue):
@@ -37,6 +45,10 @@ class PreprocessData:
         ])
         self.lasttar = "no"
         self.ready_queue = ready_queue
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
     def __call__(self, data):
         result = self.transforms(image=data["jpg"])
         data["jpg"] = result["image"]
@@ -51,6 +63,7 @@ class PreprocessData:
                 worker = None
 
             if self.lasttar != "no":
+<<<<<<< Updated upstream
                 self.ready_queue.put("%s/%s/processed/%s" % (rank+"-"+proc_type, worker, self.lasttar))
                 print(self.lasttar, "processed!")
             self.ready_queue.put("%s/%s/started/%s" % (rank+"-"+proc_type, worker, data["tarname"]))
@@ -67,10 +80,28 @@ class UnprocessedWebDataset(WebDataset):
             shards = root
             self.basedir = os.path.dirname(root)
         super().__init__(shards, *args, nodesplitter=my_split_by_node, handler=warn_and_continue, **kwargs)
+=======
+                self.ready_queue.put("%s/%s/processed/%s" % (rank+proc_type, worker, self.lasttar))
+                print(self.lasttar, "processed!")
+            self.ready_queue.put("%s/%s/started/%s" % (rank+proc_type, worker, data["tarname"]))
+            self.lasttar = data["tarname"]
+        return data
+
+
+class UnprocessedWebDataset(WebDataset):
+    def __init__(self, root, *args, ready_queue=None, **kwargs):
+        shards = [os.path.join(root, filename) for filename in os.listdir(root) if os.path.splitext(filename)[1]==".tar"]
+        shards.sort()
+        super().__init__(shards, *args, nodesplitter=split_by_node, **kwargs)
+>>>>>>> Stashed changes
         self.decode("rgb")
         self.map(PreprocessData(ready_queue))
         self.to_tuple("__key__", "tarname", "jpg")
 
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 class ProcessData:
     def __init__(self,):
         self.pretransforms = A.Compose([
@@ -120,6 +151,11 @@ class ProcessData:
         ).numpy()
 
         data["jpg"] = self.pretransforms(image=data["jpg"])["image"]
+<<<<<<< Updated upstream
+=======
+        box_thing = check_bboxes(box_thing)
+        box_face = check_bboxes(box_face)
+>>>>>>> Stashed changes
         transformed_data = self.transforms(image=data["jpg"], bboxes=box_thing, bboxes0=box_face,)
         data["jpg"] = transformed_data["image"]
         data["mask"] = seg_map
@@ -127,14 +163,22 @@ class ProcessData:
         data["box_face"] = transformed_data["bboxes0"]
         return data
 
+<<<<<<< Updated upstream
 class PreprocessedWebDataset(WebDataset):
     def __init__(self, url, *args, **kwargs):
         super().__init__(url, *args, nodesplitter=split_by_node, handler=warn_and_continue, **kwargs)
+=======
+
+class PreprocessedWebDataset(WebDataset):
+    def __init__(self, url, *args, **kwargs):
+        super().__init__(url, *args, nodesplitter=split_by_node, **kwargs)
+>>>>>>> Stashed changes
         self.decode("rgb")
         #self.decode("npz")
         self.map(ProcessData())
         self.to_tuple("jpg", "mask", "box_things", "box_face", "txt")
 
+<<<<<<< Updated upstream
 class COCOWebDataset(PreprocessedWebDataset):
     def __init__(self, *args, **kwargs):
         super().__init__("pipe:aws s3 cp s3://s-mas/coco_processed/{00000..00010}.tar -", *args, **kwargs)
@@ -169,3 +213,9 @@ if __name__ == "__main__":
     plt.imshow(draw_bounding_boxes(img, torch.tensor(ft + fb)).permute(1, 2, 0))
     plt.show()
     print()
+=======
+
+class COCOWebDataset(PreprocessedWebDataset):
+    def __init__(self, path, *args, **kwargs):
+        super().__init__(path, *args, **kwargs)
+>>>>>>> Stashed changes
