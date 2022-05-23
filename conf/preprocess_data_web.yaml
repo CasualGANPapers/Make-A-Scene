@@ -1,8 +1,8 @@
 mode: preprocess_dataset
 #root: "/home/ubuntu/MakeAScene/data/coco/mscoco"
-root: "pipe:aws s3 cp s3://s-mas/cc12m/{00000..00621}.tar  -"
-preprocessed: "/home/ubuntu/data/cc12m_tmp/"
-output_folder: "cc12m_dataset"
+root: "pipe:aws s3 cp s3://s-mas/laion-high-resolution/{00000..01500}.tar  -"
+preprocessed: "/home/ubuntu/data/laion_en_tmp/"
+output_folder: "laion_en_processed"
 
 preprocessor:
   _target_: Data.WebPreprocessor
@@ -10,7 +10,7 @@ preprocessor:
   output_folder: ${output_folder}
   batch_size: 32
   num_workers: 2
-  machines_total: 1
+  machines_total: 2
   machine_idx: 0
   devices:
           - 9
@@ -34,16 +34,6 @@ preprocessor:
 dataset:
   _target_: Data.dataset_preprocessor_web.UnprocessedWebDataset
   root: ${root}
-
-coco2014:
-  _target_: Data.dataset_preprocessor.COCO2014Dataset
-  root: ${root}
-  preprocessed_folder: ${preprocessed}
-
-coco2017:
-  _target_: Data.dataset_preprocessor.COCO2017Dataset
-  root: ${root}
-  preprocessed_folder: ${preprocessed}
 
 
 hydra:

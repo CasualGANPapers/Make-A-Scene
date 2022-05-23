@@ -9,6 +9,7 @@ from tqdm import tqdm
 import numpy as np
 import hydra
 from webdataset import WebDataset, TarWriter
+from webdataset.handlers import warn_and_continue
 from time import time, sleep
 import json
 import shutil
@@ -235,7 +236,7 @@ class WebPreprocessor:
             root = self.datatset.root
         else:
             root = os.path.dirname(self.dataset.root)
-        old_data = WebDataset(os.path.join(root, tarname))
+        old_data = WebDataset(os.path.join(root, tarname), handler=warn_and_continue)
         output_folder = "s3://s-mas/" + self.output_folder
         fs, output_path = fsspec.core.url_to_fs(output_folder)
         tar_fd = fs.open(f"{output_path}/{tarname.split(' ')[0]}", "wb")

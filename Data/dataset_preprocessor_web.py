@@ -17,6 +17,16 @@ from urllib.request import urlretrieve
 from webdataset import WebDataset
 from webdataset.shardlists import split_by_node
 from webdataset.handlers import warn_and_continue
+from itertools import islice
+
+def my_split_by_node(src, group=None):
+    rank, world_size, = int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"])
+    if world_size > 1:
+        for s in islice(islice(src, (rank*2)//world_size, None, 2), rank%(world_size//2), None, world_size//2):
+            yield s
+    else:
+        for s in src:
+            yield s
 
 class PreprocessData:
     def __init__(self, ready_queue):
@@ -56,7 +66,7 @@ class UnprocessedWebDataset(WebDataset):
         else:
             shards = root
             self.basedir = os.path.dirname(root)
-        super().__init__(shards, *args, nodesplitter=split_by_node, handlers=warn_and_continue **kwargs)
+        super().__init__(shards, *args, nodesplitter=my_split_by_node, handler=warn_and_continue, **kwargs)
         self.decode("rgb")
         self.map(PreprocessData(ready_queue))
         self.to_tuple("__key__", "tarname", "jpg")
@@ -119,7 +129,7 @@ class ProcessData:
 
 class PreprocessedWebDataset(WebDataset):
     def __init__(self, url, *args, **kwargs):
-        super().__init__(url, *args, nodesplitter=split_by_node, **kwargs)
+        super().__init__(url, *args, nodesplitter=split_by_node, handler=warn_and_continue, **kwargs)
         self.decode("rgb")
         #self.decode("npz")
         self.map(ProcessData())
@@ -129,6 +139,24 @@ class COCOWebDataset(PreprocessedWebDataset):
     def __init__(self, *args, **kwargs):
         super().__init__("pipe:aws s3 cp s3://s-mas/coco_processed/{00000..00010}.tar -", *args, **kwargs)
 
+class CC3MWebDataset(PreprocessedWebDataset):
+    def __init__(self, *args, **kwargs):
+        super().__init__("pipe:aws s3 cp s3://s-mas/cc3m_processed/{00000..00331}.tar -", *args, **kwargs)
+
+class S3ProcessedDataset(PreprocessedWebDataset):
+    datasets = {
+                "coco": "pipe:aws s3 cp s3://s-mas/coco_processed/{00000..00059}.tar -",
+                "cc3m": "pipe:aws s3 cp s3://s-mas/cc3m_processed/{00000..00331}.tar -",
+                "cc12m": "pipe:aws s3 cp s3://s-mas/cc12m_processed/{00000..01242}.tar -",
+                "laion": "pipe:aws s3 cp s3://s-mas/laion_en_processed/{00000..01500}.tar -"
+                }
+    def __init__(self, names, *args, **kwargs):
+        urls = []
+        for name in names:
+            assert name in self.datasets, f"There is no processed dataset {name}"
+            urls.append(self.datasets[name])
+        urls = "::".join(urls)
+        super().__init__(urls, *args, **kwargs)
 
 if __name__ == "__main__":
     coco = COCO2014Dataset(
