@@ -7,20 +7,18 @@ accumulate_grad: 3
 resume: False
 checkpoint: ./outputs/2022-04-03/19-00-36/checkpoint.pt
 log_period: 50
-batch_size: 2  # 192
+batch_size: 1  # 192
 
 model:
   _target_: models.VQBASE
   embed_dim: 256
   n_embed: 1024  # 8192
+  init_steps: 2000
   ddconfig:
-    double_z: false
     z_channels: 256
-    resolution: 256
     in_channels: 3
-    out_ch: 3
-    ch: 128
-    ch_mult: [1,1,2,2,4]  # [1, 1, 2, 4, 4]
+    out_channels: 3
+    channels: [128, 128, 128, 256, 256, 256, 512]  # [1, 1, 2, 4, 4]
     num_res_blocks: 2
     attn_resolutions:
     - 16
@@ -39,24 +37,19 @@ optimizer:
       - 0.9
 
 dataset:
-  _target_: Data.dataset_preprocessor.COCO2014Dataset
-  root: "D:\\PycharmProjects\\Make-A-Scene\\Data\\coco\\tmpdb_2\\"
-  preprocessed_folder: "D:\\PycharmProjects\\Make-A-Scene\\Data\\coco\\tmpdb_2\\preprocessed_folder"
-  force_preprocessing: False
+  _target_: Data.dataset_preprocessor_web.COCOWebDataset
+  path: file:D:/PycharmProjects/Make-A-Scene/server/Make-A-Scene/dataset/coco/{00000..00004}.tar
 
 loss:
   #_target_: losses.VQVAEWithBCELoss
-  _target_: losses.VQLPIPSWithDiscriminator
-  disc_conditional: False
-  disc_in_channels: 3
+  _target_: losses.loss_img.VQLPIPSWithDiscriminator
   disc_start: 250001
   disc_weight: 0.8
   codebook_weight: 1.0
 
 dataloader:
-  batch_size: 2
+  batch_size: 1
   num_workers: 8
-  shuffle: True
   pin_memory: True
 
 hydra:

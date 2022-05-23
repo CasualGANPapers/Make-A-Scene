@@ -15,7 +15,7 @@ class Logger:
         self.step = 0
         os.makedirs("./results")
 
-    def log(self, loss, q_loss, seg, seg_rec, d_loss=None, step=None):
+    def log(self, loss, q_loss, img, img_rec, d_loss=None, step=None):
         if self.proc_id != 0:
             return
         self.step = step or self.step + 1
