@@ -1,3 +1,5 @@
+import copy
+import matplotlib.pyplot as plt
 import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader
@@ -56,13 +58,18 @@ def train(proc_id, cfg):
 
     elif cfg.mode == "pretrain_image":
         vq_optim = torch.optim.Adam(model.parameters(), **cfg.optimizer.vq)
-        disc_optim = torch.optim.Adam(model.parameters(), **cfg.optimizer.disc)
+        disc_optim = torch.optim.Adam(loss_fn.discriminator.parameters(), **cfg.optimizer.disc)
 
         pbar = tqdm(range(cfg.total_steps))
+        data = next(dataloader_iter)  # try to overfit single image
+        img, _, bbox_objects_all, bbox_faces_all, _ = data
+        img = img.to(device)
         for step in pbar:
-            data = next(dataloader_iter)
-            img, _, bbox_objects, bbox_faces, _ = data
-            img = img.to(device)
+            # data = next(dataloader_iter)
+            # img, _, bbox_objects, bbox_faces, _ = data
+            # img = img.to(device)
+            bbox_objects = copy.deepcopy(bbox_objects_all)
+            bbox_faces = copy.deepcopy(bbox_faces_all)
             img_rec, q_loss = model(img)
 
             d_loss = loss_fn(optimizer_idx=1, global_step=step, images=img, reconstructions=img_rec)
@@ -70,17 +77,24 @@ def train(proc_id, cfg):
             d_loss.backward()
             disc_optim.step()
 
-            loss = loss_fn(optimizer_idx=0, global_step=step, images=img, reconstructions=img_rec,
-                           codebook_loss=q_loss, bbox_obj=bbox_objects, bbox_face=bbox_faces,
-                           last_layer=model.decoder.model[-1])
+            loss, (nll_loss, object_loss, face_loss) = loss_fn(optimizer_idx=0, global_step=step, images=img,
+                                                               reconstructions=img_rec,
+                                                               codebook_loss=q_loss, bbox_obj=bbox_objects,
+                                                               bbox_face=bbox_faces,
+                                                               last_layer=model.decoder.model[-1])
             vq_optim.zero_grad()
             loss.backward()
             vq_optim.step()
 
+            if step % 100 == 0:
+                plt.imshow(img_rec[0].permute(1, 2, 0).detach().cpu().numpy())
+                plt.show()
+
             if step % cfg.log_period == 0:
                 logger.log(loss=loss, q_loss=q_loss, img=img, img_rec=img_rec, d_loss=d_loss, step=step)
                 torch.save(model.state_dict(), "checkpoint.pt")
-            pbar.set_postfix(loss=loss, q_loss=q_loss, d_loss=d_loss)
+            pbar.set_postfix(loss=loss.item(), q_loss=q_loss.item(), d_loss=d_loss.item(),
+                             nll_loss=nll_loss.item(), object_loss=object_loss.item(), face_loss=face_loss.item())
 
             # if step % cfg.accumulate_grad == 0:
             #     vq_optim.step()
@@ -119,7 +133,6 @@ def visualize(cfg):
 
 
 def preprocess_dataset(cfg):
-    #dataset = hydra.utils.instantiate(cfg.dataset,)
     # dataset = hydra.utils.instantiate(cfg.dataset,)
     dataset = cfg.dataset
     preprocessor = hydra.utils.instantiate(cfg.preprocessor)
