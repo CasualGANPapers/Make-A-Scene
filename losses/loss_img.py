@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from lpips import LPIPS
-from discriminator import Discriminator, weights_init
-from face_loss import resnet50
+from .lpips import LPIPS
+from .discriminator import Discriminator, weights_init
+from .face_loss import resnet50
 from torchvision.transforms.functional import crop
 
 
@@ -29,7 +29,7 @@ def vanilla_d_loss(logits_real, logits_fake):
 
 class VQLPIPSWithDiscriminator(nn.Module):
     def __init__(self, disc_start, codebook_weight=1.0, pixelloss_weight=1.0,
-                 disc_factor=1.0, disc_weight=1.0, perceptual_weight=1.0, disc_conditional=False):
+                 disc_factor=1.0, disc_weight=1.0, perceptual_weight=1.0):
         super().__init__()
         self.codebook_weight = codebook_weight
         self.pixel_weight = pixelloss_weight
@@ -37,74 +37,76 @@ class VQLPIPSWithDiscriminator(nn.Module):
         self.perceptual_weight = perceptual_weight
 
         self.face_loss = resnet50()
+        self.object_loss = self.perceptual_loss
 
         self.discriminator = Discriminator().apply(weights_init)
         self.discriminator_iter_start = disc_start
         self.disc_factor = disc_factor
         self.discriminator_weight = disc_weight
-        self.disc_conditional = disc_conditional
 
-    def calculate_adaptive_weight(self, nll_loss, g_loss, last_layer=None):
-        if last_layer is not None:
-            nll_grads = torch.autograd.grad(nll_loss, last_layer, retain_graph=True)[0]
-            g_grads = torch.autograd.grad(g_loss, last_layer, retain_graph=True)[0]
-        else:
-            nll_grads = torch.autograd.grad(nll_loss, self.last_layer[0], retain_graph=True)[0]
-            g_grads = torch.autograd.grad(g_loss, self.last_layer[0], retain_graph=True)[0]
+    def calculate_adaptive_weight(self, nll_loss, g_loss, last_layer):
+        nll_grads = torch.autograd.grad(nll_loss, last_layer.weight, retain_graph=True)[0]
+        g_grads = torch.autograd.grad(g_loss, last_layer.weight, retain_graph=True)[0]
 
         d_weight = torch.norm(nll_grads) / (torch.norm(g_grads) + 1e-4)
         d_weight = torch.clamp(d_weight, 0.0, 1e4).detach()
         d_weight = d_weight * self.discriminator_weight
         return d_weight
 
-    def forward(self, codebook_loss, inputs, reconstructions, bbox_face, bbox_obj, global_step, last_layer=None, cond=None):
-        rec_loss = torch.abs(inputs.contiguous() - reconstructions.contiguous())
-        p_loss = self.perceptual_loss(inputs.contiguous(), reconstructions.contiguous())
-        rec_loss = rec_loss + self.perceptual_weight * p_loss
+    def forward(self, optimizer_idx, global_step, images, reconstructions, codebook_loss=None, bbox_obj=None, bbox_face=None, last_layer=None):
+        if optimizer_idx == 0:  # vqvae loss
+            rec_loss = torch.abs(images.contiguous() - reconstructions.contiguous())
+            p_loss = self.perceptual_loss(images.contiguous(), reconstructions.contiguous())
+            rec_loss = rec_loss + self.perceptual_weight * p_loss
 
-        nll_loss = rec_loss
-        nll_loss = torch.mean(nll_loss)
+            nll_loss = rec_loss
+            nll_loss = torch.mean(nll_loss)
 
-        face_loss = 0.
-        for img, rec, bboxes in zip(inputs, reconstructions, bbox_face):
-            for bbox in bboxes:
-                img = crop(img, *bbox)  # bbox needs to be [x, y, height, width]
-                rec = crop(rec, *bbox)
-                face_loss += self.face_loss(img.contiguous(), rec.contiguous())
+            face_loss = images.new_tensor(0)
+            for img, rec, bboxes in zip(images, reconstructions, bbox_face):
+                for bbox in bboxes:
+                    top = bbox[1]
+                    left = bbox[0]
+                    height = bbox[3] - bbox[1]
+                    width = bbox[2] - bbox[0]
+                    crop_img = crop(img, top, left, height, width).unsqueeze(0)  # bbox needs to be [x, y, height, width]
+                    crop_rec = crop(rec, top, left, height, width).unsqueeze(0)
+                    face_loss += self.face_loss(crop_img.contiguous(), crop_rec.contiguous()).mean()
 
-        object_loss = 0.
-        for img, rec, bboxes in zip(inputs, reconstructions, bbox_obj):
-            for bbox in bboxes:
-                img = crop(img, *bbox)  # bbox needs to be [x, y, height, width]
-                rec = crop(rec, *bbox)
-                object_loss += self.object_loss(img.contiguous(), rec.contiguous())
+            object_loss = images.new_tensor(0)
+            # for img, rec, bboxes in zip(images, reconstructions, bbox_obj):
+            #     for bbox in bboxes:
+            #         # xmin, ymin, xmax, ymax
+            #         top = bbox[1]
+            #         left = bbox[0]
+            #         height = bbox[3] - bbox[1]
+            #         width = bbox[2] - bbox[0]
+            #         crop_img = crop(img, *bbox).unsqueeze(0)  # bbox needs to be [x, y, height, width]
+            #         crop_rec = crop(rec, *bbox).unsqueeze(0)
+            #         object_loss += self.object_loss(crop_img.contiguous(), crop_rec.contiguous()).mean()  # TODO: check if crops are actually correct
 
-        # now the GAN part
-        if cond is None:
-            assert not self.disc_conditional
-            logits_fake = self.discriminator(reconstructions.contiguous())
-        else:
-            assert self.disc_conditional
-            logits_fake = self.discriminator(torch.cat((reconstructions.contiguous(), cond), dim=1))
-        g_loss = -torch.mean(logits_fake)
+            logits_fake = self.discriminator(reconstructions.contiguous())  # cont not necessary
+            g_loss = -torch.mean(logits_fake)
 
-        d_weight = self.calculate_adaptive_weight(nll_loss, g_loss, last_layer=last_layer)
+            d_weight = self.calculate_adaptive_weight(nll_loss, g_loss, last_layer=last_layer)
 
-        disc_factor = adopt_weight(self.disc_factor, global_step, threshold=self.discriminator_iter_start)
+            disc_factor = adopt_weight(self.disc_factor, global_step, threshold=self.discriminator_iter_start)
 
-        loss = nll_loss + \
-               d_weight * disc_factor * g_loss + \
-               self.codebook_weight * codebook_loss.mean() + \
-               face_loss + \
-               object_loss
+            loss = nll_loss + \
+                   d_weight * disc_factor * g_loss + \
+                   self.codebook_weight * codebook_loss.mean() + \
+                   face_loss
+                   # 0.001 * face_loss
+                   # object_loss
+            return loss, (nll_loss, object_loss, face_loss)
+            # return loss, (nll_loss, images.new_tensor(0), images.new_tensor(0))
 
-        if cond is None:
-            logits_real = self.discriminator(inputs.contiguous().detach())
+        if optimizer_idx == 1:  # gan loss
+            disc_factor = adopt_weight(self.disc_factor, global_step, threshold=self.discriminator_iter_start)
+
+            logits_real = self.discriminator(images.contiguous().detach())
             logits_fake = self.discriminator(reconstructions.contiguous().detach())
-        else:
-            logits_real = self.discriminator(torch.cat((inputs.contiguous().detach(), cond), dim=1))
-            logits_fake = self.discriminator(torch.cat((reconstructions.contiguous().detach(), cond), dim=1))
 
-        d_loss = disc_factor * hinge_d_loss(logits_real, logits_fake)
+            d_loss = disc_factor * hinge_d_loss(logits_real, logits_fake)
+            return d_loss
 
-        return loss, d_loss

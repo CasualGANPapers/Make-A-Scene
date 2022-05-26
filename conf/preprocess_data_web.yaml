@@ -1,0 +1,41 @@
+mode: preprocess_dataset
+#root: "/home/ubuntu/MakeAScene/data/coco/mscoco"
+root: "pipe:aws s3 cp s3://s-mas/laion-high-resolution/{00000..01500}.tar  -"
+preprocessed: "/home/ubuntu/data/laion_en_tmp/"
+output_folder: "laion_en_processed"
+
+preprocessor:
+  _target_: Data.WebPreprocessor
+  preprocessed_folder: ${preprocessed}
+  output_folder: ${output_folder}
+  batch_size: 32
+  num_workers: 2
+  machines_total: 2
+  machine_idx: 0
+  devices:
+          - 9
+  proc_per_gpu:
+          panoptic:
+                  -  4
+                  -  5
+                  -  6
+                  -  7
+          human:
+                  -  2
+                  -  3
+          face:
+                  -  0
+                  -  1
+  proc_per_cpu:
+          panoptic: 0
+          human: 0
+          face: 0
+
+dataset:
+  _target_: Data.dataset_preprocessor_web.UnprocessedWebDataset
+  root: ${root}
+
+
+hydra:
+  run:
+    dir: ./outputs/${mode}/${now:%Y-%m-%d}/${now:%H-%M-%S}
