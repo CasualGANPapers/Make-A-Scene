@@ -1,55 +1,17 @@
 """
 Code taken from and modified https://github.com/cydonia999/VGGFace2-pytorch
 """
-import pickle
 
-import torch.nn as nn
 import torch
-import math
+import torch.nn as nn
 
-__all__ = ['ResNet', 'resnet50']
-
-
-def load_state_dict(model, fname):
-    """
-    Set parameters converted from Caffe models authors of VGGFace2 provide.
-    See https://www.robots.ox.ac.uk/~vgg/data/vgg_face2/.
-    Arguments:
-        model: model
-        fname: file name of parameters converted from a Caffe model, assuming the file format is Pickle.
-    """
-    with open(fname, 'rb') as f:
-        weights = pickle.load(f, encoding='latin1')
-
-    own_state = model.state_dict()
-    for name, param in weights.items():
-        print(name)
-        if name in own_state:
-            try:
-                own_state[name].copy_(torch.from_numpy(param))
-            except Exception:
-                raise RuntimeError('While copying the parameter named {}, whose dimensions in the model are {} and whose '\
-                                   'dimensions in the checkpoint are {}.'.format(name, own_state[name].size(), param.size()))
-        else:
-            raise KeyError('unexpected key "{}" in state_dict'.format(name))
+__all__ = ['FaceLoss']
 
 
 def conv3x3(in_planes, out_planes, stride=1):
     """3x3 convolution with padding"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
                      padding=1, bias=False)
-
-
-class NetLinLayer(nn.Module):
-    def __init__(self, in_channels, out_channels=1):
-        super(NetLinLayer, self).__init__()
-        self.model = nn.Sequential(
-            nn.Dropout(),
-            nn.Conv2d(in_channels, out_channels, 1, 1, 0, bias=False)
-        )
-
-    def forward(self, x):
-        return self.model(x)
 
 
 class Bottleneck(nn.Module):
@@ -90,11 +52,11 @@ class Bottleneck(nn.Module):
         return out
 
 
-class ResNet(nn.Module):
-
-    def __init__(self, block, layers):
+class FaceLoss(nn.Module):
+    def __init__(self):
+        super(FaceLoss, self).__init__()
+        layers = [3, 4, 6, 3]
         self.inplanes = 64
-        super(ResNet, self).__init__()
         self.alphas = [0.1, 0.25 * 0.01, 0.25 * 0.1, 0.25 * 0.2, 0.25 * 0.02]
 
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
@@ -102,10 +64,10 @@ class ResNet(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0, ceil_mode=True)
 
-        self.layer1 = self._make_layer(block, 64, layers[0])
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+        self.layer1 = self._make_layer(Bottleneck, 64, layers[0])
+        self.layer2 = self._make_layer(Bottleneck, 128, layers[1], stride=2)
+        self.layer3 = self._make_layer(Bottleneck, 256, layers[2], stride=2)
+        self.layer4 = self._make_layer(Bottleneck, 512, layers[3], stride=2)
 
         self.channels = [64, 256, 512, 1024, 2048]
 
@@ -151,15 +113,6 @@ class ResNet(nn.Module):
 
         return features
 
-    @staticmethod
-    def norm_tensor(x):
-        norm_factor = torch.sqrt(torch.sum(x ** 2, dim=1, keepdim=True))
-        return x / (norm_factor + 1e-10)
-
-    @staticmethod
-    def spatial_average(x):
-        return x.mean([2, 3], keepdim=True)
-
     def forward(self, x, x_rec):
         """
         Takes in original image and reconstructed image and feeds it through face network and takes the difference
@@ -178,15 +131,8 @@ class ResNet(nn.Module):
         # return sum(diffs) / len(diffs)
 
 
-def resnet50(**kwargs):
-    """Constructs a ResNet-50 model.
-    """
-    model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
-    return model
-
-
 if __name__ == '__main__':
-    model = resnet50()
+    model = FaceLoss()
     # x = torch.randn(1, 3, 256, 256)
     # x_rec = torch.randn(1, 3, 256, 256)
     x = torch.randn(2, 3, 101, 101)
