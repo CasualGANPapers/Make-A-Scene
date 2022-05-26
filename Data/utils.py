@@ -6,6 +6,9 @@ def check_bbox(bbox):
         return None
     if y_max <= y_min:
         return None
+    if y_max - y_min < 16 or x_max - x_min < 16:
+        # print(f"removing bbox: {bbox}")
+        return None
 
     return bbox
 
