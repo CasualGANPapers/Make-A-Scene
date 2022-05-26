@@ -18,7 +18,7 @@ model:
     z_channels: 256
     in_channels: 3
     out_channels: 3
-    channels: [128, 128, 128, 256, 256, 256, 512]  # [1, 1, 2, 4, 4]
+    channels: [128, 128, 128, 256, 256, 512]  # [1, 1, 2, 4, 4]
     num_res_blocks: 2
     attn_resolutions:
     - 16
@@ -26,7 +26,7 @@ model:
 
 optimizer:
   vq:
-    lr: 4.5e-6
+    lr: 1e-5
     betas:
       - 0.5
       - 0.9
@@ -38,7 +38,8 @@ optimizer:
 
 dataset:
   _target_: Data.dataset_preprocessor_web.COCOWebDataset
-  path: file:D:/PycharmProjects/Make-A-Scene/server/Make-A-Scene/dataset/coco/{00000..00004}.tar
+#  path: file:D:/PycharmProjects/Make-A-Scene/server/Make-A-Scene/dataset/coco/{00000..00004}.tar
+  path: file:D:/PycharmProjects/Make-A-Scene/server/Make-A-Scene/dataset/coco/great_dataset.tar
 
 loss:
   #_target_: losses.VQVAEWithBCELoss
