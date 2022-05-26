@@ -43,15 +43,19 @@ class LPIPS(nn.Module):
         self.scaling_layer = ScalingLayer()
         self.channels = [64, 128, 256, 512, 512]
         self.vgg = VGG16()
-        self.lins = nn.ModuleList([
-            NetLinLayer(self.channels[0]),
-            NetLinLayer(self.channels[1]),
-            NetLinLayer(self.channels[2]),
-            NetLinLayer(self.channels[3]),
-            NetLinLayer(self.channels[4])
-        ])
-
+        self.lin0 = NetLinLayer(self.channels[0])
+        self.lin1 = NetLinLayer(self.channels[1])
+        self.lin2 = NetLinLayer(self.channels[2])
+        self.lin3 = NetLinLayer(self.channels[3])
+        self.lin4 = NetLinLayer(self.channels[4])
         self.load_from_pretrained()
+        self.lins = [
+            self.lin0,
+            self.lin1,
+            self.lin2,
+            self.lin3,
+            self.lin4
+        ]
 
         for param in self.parameters():
             param.requires_grad = False
@@ -136,3 +140,4 @@ def spatial_average(x):
     :return: averaged images along width and height
     """
     return x.mean([2, 3], keepdim=True)
+

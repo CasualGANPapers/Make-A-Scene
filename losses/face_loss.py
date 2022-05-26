@@ -1,12 +1,37 @@
 """
 Code taken from and modified https://github.com/cydonia999/VGGFace2-pytorch
 """
+import pickle
 
 import torch.nn as nn
 import torch
 import math
 
 __all__ = ['ResNet', 'resnet50']
+
+
+def load_state_dict(model, fname):
+    """
+    Set parameters converted from Caffe models authors of VGGFace2 provide.
+    See https://www.robots.ox.ac.uk/~vgg/data/vgg_face2/.
+    Arguments:
+        model: model
+        fname: file name of parameters converted from a Caffe model, assuming the file format is Pickle.
+    """
+    with open(fname, 'rb') as f:
+        weights = pickle.load(f, encoding='latin1')
+
+    own_state = model.state_dict()
+    for name, param in weights.items():
+        print(name)
+        if name in own_state:
+            try:
+                own_state[name].copy_(torch.from_numpy(param))
+            except Exception:
+                raise RuntimeError('While copying the parameter named {}, whose dimensions in the model are {} and whose '\
+                                   'dimensions in the checkpoint are {}.'.format(name, own_state[name].size(), param.size()))
+        else:
+            raise KeyError('unexpected key "{}" in state_dict'.format(name))
 
 
 def conv3x3(in_planes, out_planes, stride=1):
@@ -67,11 +92,10 @@ class Bottleneck(nn.Module):
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, layers, num_classes=1000, include_top=False):
+    def __init__(self, block, layers):
         self.inplanes = 64
         super(ResNet, self).__init__()
         self.alphas = [0.1, 0.25 * 0.01, 0.25 * 0.1, 0.25 * 0.2, 0.25 * 0.02]
-        self.include_top = include_top
 
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
@@ -82,25 +106,10 @@ class ResNet(nn.Module):
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
-        self.avgpool = nn.AvgPool2d(7, stride=1)
-        self.fc = nn.Linear(512 * block.expansion, num_classes)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2. / n))
-            elif isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
 
         self.channels = [64, 256, 512, 1024, 2048]
-        self.lins = nn.ModuleList([
-            NetLinLayer(self.channels[0]),
-            NetLinLayer(self.channels[1]),
-            NetLinLayer(self.channels[2]),
-            NetLinLayer(self.channels[3]),
-            NetLinLayer(self.channels[4]),
-        ])
+
+        self.load_state_dict(torch.load(r"D:\PycharmProjects\Make-A-Scene\server\Make-A-Scene\losses\face_loss_weights.pt", map_location="cpu"), strict=False)
 
         for param in self.parameters():
             param.requires_grad = False
@@ -123,7 +132,7 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, x):  # 224x224
+    def _forward(self, x):  # 224x224
         features = []
         x = self.conv1(x)  # 112x112
         features.append(x)
@@ -140,15 +149,7 @@ class ResNet(nn.Module):
         x = self.layer4(x)  # 7x7
         features.append(x)
 
-        if not self.include_top:
-            return features
-
-        x = self.avgpool(x)  # 1x1
-        features.append(x)
-
-        x = x.view(x.size(0), -1)
-        x = self.fc(x)
-        return x
+        return features
 
     @staticmethod
     def norm_tensor(x):
@@ -159,18 +160,22 @@ class ResNet(nn.Module):
     def spatial_average(x):
         return x.mean([2, 3], keepdim=True)
 
-    def face_loss(self, x, x_rec):
+    def forward(self, x, x_rec):
         """
         Takes in original image and reconstructed image and feeds it through face network and takes the difference
         between the different resolutions and scales by alpha_{i}.
         Normalizing the features and applying spatial resolution was taken from LPIPS and wasn't mentioned in the paper.
         """
-        true_features = self(x)
-        rec_features = self(x_rec)
-
+        images = torch.concat([x, x_rec], dim=0)  # batch
+        features = self._forward(images)
+        features = [f.chunk(2) for f in features]
+        # diffs = [a * torch.abs(p[0] - p[1]).sum() for a, p in zip(self.alphas, features)]
+        diffs = [a * torch.abs(p[0] - p[1]).mean() for a, p in zip(self.alphas, features)]
         # diffs = [a*torch.abs(self.norm_tensor(tf) - self.norm_tensor(rf)) for a, tf, rf in zip(self.alphas, true_features, rec_features)]
-        diffs = [a * torch.abs(tf - rf) for a, tf, rf in zip(self.alphas, true_features, rec_features)]
-        return sum([net_layer(self.spatial_average(diff)) for net_layer, diff in zip(self.lins, diffs)])
+
+        # diffs = [a * torch.mean(torch.abs(tf - rf)) for a, tf, rf in zip(self.alphas, features)]
+        return sum(diffs)
+        # return sum(diffs) / len(diffs)
 
 
 def resnet50(**kwargs):
@@ -184,6 +189,6 @@ if __name__ == '__main__':
     model = resnet50()
     # x = torch.randn(1, 3, 256, 256)
     # x_rec = torch.randn(1, 3, 256, 256)
-    x = torch.randn(1, 3, 101, 101)
-    x_rec = torch.randn(1, 3, 101, 101)
-    print(model.face_loss(x, x_rec))
+    x = torch.randn(2, 3, 101, 101)
+    x_rec = torch.randn(2, 3, 101, 101)
+    print(model.forward(x, x_rec))
