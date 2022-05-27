@@ -148,7 +148,7 @@ class COCOWebDataset(PreprocessedWebDataset):
 
 class CC3MWebDataset(PreprocessedWebDataset):
     def __init__(self, *args, **kwargs):
-        super().__init__("pipe:aws s3 cp s3://s-mas/cc3m_processed/{00000..00331}.tar -", *args, **kwargs)
+        super().__init__("pipe:aws s3 cp s3://s-mas/cc3m_processed/{00000..00011}.tar -", *args, **kwargs)
 
 class S3ProcessedDataset(PreprocessedWebDataset):
     datasets = {

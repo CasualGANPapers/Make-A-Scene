@@ -6,13 +6,16 @@ from .modules import Codebook
 
 
 class VQBASE(nn.Module):
-    def __init__(self, ddconfig, n_embed, embed_dim, init_steps):
+    def __init__(self, ddconfig, n_embed, embed_dim, init_steps, reservoir_size):
         super(VQBASE, self).__init__()
         self.encoder = Encoder(**ddconfig)
         self.decoder = Decoder(**ddconfig)
-        self.quantize = Codebook(n_embed, embed_dim, beta=0.25, init_steps=init_steps)  # TODO: change length_one_epoch
-        self.quant_conv = torch.nn.Conv2d(ddconfig["z_channels"], embed_dim, 1)
-        self.post_quant_conv = torch.nn.Conv2d(embed_dim, ddconfig["z_channels"], 1)
+        self.quantize = Codebook(n_embed, embed_dim, beta=0.25, init_steps=init_steps, reservoir_size=reservoir_size)  # TODO: change length_one_epoch
+        self.quant_conv = nn.Sequential(
+                                        nn.Conv2d(ddconfig["z_channels"], embed_dim, 1),
+                                        nn.SyncBatchNorm(embed_dim)
+                                        )
+        self.post_quant_conv = nn.Conv2d(embed_dim, ddconfig["z_channels"], 1)
 
     def encode(self, x):
         h = self.encoder(x)

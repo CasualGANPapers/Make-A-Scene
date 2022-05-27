@@ -71,7 +71,7 @@ class FaceLoss(nn.Module):
 
         self.channels = [64, 256, 512, 1024, 2048]
 
-        self.load_state_dict(torch.load(r"D:\PycharmProjects\Make-A-Scene\server\Make-A-Scene\losses\face_loss_weights.pt", map_location="cpu"), strict=False)
+        self.load_state_dict(torch.load("/home/ubuntu/Make-A-Scene/losses/face_loss_weights.pt", map_location="cpu"), strict=False)
 
         for param in self.parameters():
             param.requires_grad = False

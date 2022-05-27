@@ -7,6 +7,7 @@ import torch.nn.functional as F
 import numpy as np
 from fast_pytorch_kmeans import KMeans
 from torch import einsum
+import torch.distributed as dist
 from einops import rearrange
 
 
@@ -213,10 +214,9 @@ class Encoder(nn.Module):
     --Conv2d-> 256x32x32
     """
 
-    def __init__(self, in_channels=3, channels=[128, 128, 128, 256, 256, 256, 512], attn_resolutions=[16], dropout=0.0, num_res_blocks=2, z_channels=256, **kwargs):
+    def __init__(self, in_channels=3, channels=[128, 128, 128, 256, 512, 512], attn_resolutions=[32], resolution=512, dropout=0.0, num_res_blocks=2, z_channels=256, **kwargs):
         super(Encoder, self).__init__()
         layers = [nn.Conv2d(in_channels, channels[0], 3, 1, 1)]
-        resolution = 256
         for i in range(len(channels) - 1):
             in_channels = channels[i]
             out_channels = channels[i + 1]
@@ -227,7 +227,7 @@ class Encoder(nn.Module):
                     layers.append(AttnBlock(in_channels))
             if i < len(channels) - 2:
                 layers.append(Downsample(channels[i + 1], with_conv=True))
-            resolution //= 2
+                resolution //= 2
         layers.append(ResnetBlock(in_channels=channels[-1], out_channels=channels[-1], dropout=0.0))
         layers.append(AttnBlock(channels[-1]))
         layers.append(ResnetBlock(in_channels=channels[-1], out_channels=channels[-1], dropout=0.0))
@@ -335,12 +335,12 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, out_channels=3, channels=[128, 128, 128, 256, 256, 256, 512], attn_resolutions=[16], dropout=0.0, num_res_blocks=2, z_channels=256, **kwargs):
+    def __init__(self, out_channels=3, channels=[128, 128, 128, 256, 512, 512], attn_resolutions=[32], resolution=512, dropout=0.0, num_res_blocks=2, z_channels=256, **kwargs):
         super(Decoder, self).__init__()
         ch_mult = channels[1:]
         num_resolutions = len(ch_mult)
         block_in = ch_mult[num_resolutions - 1]
-        curr_res = 256 // 2 ** (num_resolutions - 1)
+        curr_res = resolution// 2 ** (num_resolutions - 1)
 
         layers = [nn.Conv2d(z_channels, block_in, kernel_size=3, stride=1, padding=1),
                   ResnetBlock(in_channels=block_in, out_channels=block_in, dropout=0.0),
@@ -453,7 +453,7 @@ class Codebook(nn.Module):
     Improved version over VectorQuantizer, can be used as a drop-in replacement. Mostly
     avoids costly matrix multiplications and allows for post-hoc remapping of indices.
     """
-    def __init__(self, codebook_size, codebook_dim, beta, init_steps=2000):
+    def __init__(self, codebook_size, codebook_dim, beta, init_steps=2000, reservoir_size=2e5):
         super().__init__()
         self.codebook_size = codebook_size
         self.codebook_dim = codebook_dim
@@ -462,28 +462,40 @@ class Codebook(nn.Module):
         self.embedding = nn.Embedding(self.codebook_size, self.codebook_dim)
         self.embedding.weight.data.uniform_(-1.0 / self.codebook_size, 1.0 / self.codebook_size)
 
-        self.q_init, self.q_re_end, self.q_re_step = init_steps * 3, init_steps * 30, init_steps // 2
+        self.q_start_collect, self.q_init, self.q_re_end, self.q_re_step = init_steps, init_steps * 3, init_steps * 30, init_steps // 2
         self.q_counter = 0
-        self.reservoir_size = int(2e5)
+        self.reservoir_size = int(reservoir_size)
         self.reservoir = None
 
     def forward(self, z):
         z = rearrange(z, 'b c h w -> b h w c').contiguous()
+        batch_size = z.size(0)
         z_flattened = z.view(-1, self.codebook_dim)
         if self.training:
             self.q_counter += 1
             # x_flat = x.permute(0, 2, 3, 1).reshape(-1, z.shape(1))
-            self.reservoir = z_flattened if self.reservoir is None else torch.cat([self.reservoir, z_flattened], dim=0)
-            self.reservoir = self.reservoir[torch.randperm(self.reservoir.size(0))[:self.reservoir_size]].detach()
+            if self.q_counter > self.q_start_collect:
+                z_new = z_flattened.clone().detach().view(batch_size, -1, self.codebook_dim)
+                z_new = z_new[:, torch.randperm(z_new.size(1))][:, :10].reshape(-1, self.codebook_dim)
+                self.reservoir = z_new if self.reservoir is None else torch.cat([self.reservoir, z_new], dim=0)
+                self.reservoir = self.reservoir[torch.randperm(self.reservoir.size(0))[:self.reservoir_size]].detach()
             if self.q_counter < self.q_init:
                 z_q = rearrange(z, 'b h w c -> b c h w').contiguous()
                 return z_q, z_q.new_tensor(0), None  # z_q, loss, min_encoding_indices
             else:
                 # if self.q_counter < self.q_init + self.q_re_end:
                 if self.q_init <= self.q_counter < self.q_re_end:
-                    if (self.q_counter + self.q_init) % self.q_re_step == 0 or self.q_counter == self.q_init or self.q_counter == self.q_init + self.q_re_end - 1:
+                    if (self.q_counter - self.q_init) % self.q_re_step == 0 or self.q_counter == self.q_init + self.q_re_end - 1:
                         kmeans = KMeans(n_clusters=self.codebook_size)
-                        kmeans.fit_predict(self.reservoir)  # reservoir is 20k encoded latents
+                        world_size = dist.get_world_size()
+                        print("Updating codebook from reservoir.")
+                        if world_size > 1:
+                            global_reservoir = [torch.zeros_like(self.reservoir) for _ in range(world_size)]
+                            dist.all_gather(global_reservoir, self.reservoir.clone())
+                            global_reservoir = torch.cat(global_reservoir, dim=0)
+                        else:
+                            global_reservoir = self.reservoir
+                        kmeans.fit_predict(global_reservoir)  # reservoir is 20k encoded latents
                         self.embedding.weight.data = kmeans.centroids.detach()
 
         d = torch.sum(z_flattened ** 2, dim=1, keepdim=True) + \

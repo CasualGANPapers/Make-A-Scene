@@ -8,7 +8,7 @@ import torch.multiprocessing as mp
 from tqdm import tqdm
 import hydra
 from log_utils import Logger, Visualizer
-from utils import collate_fn
+from utils import collate_fn, change_requires_grad
 import os
 
 
@@ -27,7 +27,7 @@ def train(proc_id, cfg):
         state_dict = torch.load(cfg.checkpoint, map_location=device)
         model.load_state_dict(state_dict)
     if parallel:
-        model = DistributedDataParallel(model, device_ids=[device], output_device=device)
+        model = DistributedDataParallel(model, device_ids=[device], output_device=device, find_unused_parameters=True)
     loss_fn = hydra.utils.instantiate(cfg.loss).to(device)
     logger = Logger(proc_id, device=device)
 
@@ -65,45 +65,41 @@ def train(proc_id, cfg):
         img, _, bbox_objects_all, bbox_faces_all, _ = data
         img = img.to(device)
         for step in pbar:
-            # data = next(dataloader_iter)
-            # img, _, bbox_objects, bbox_faces, _ = data
-            # img = img.to(device)
             bbox_objects = copy.deepcopy(bbox_objects_all)
             bbox_faces = copy.deepcopy(bbox_faces_all)
             img_rec, q_loss = model(img)
 
+            change_requires_grad(model, False)
             d_loss = loss_fn(optimizer_idx=1, global_step=step, images=img, reconstructions=img_rec)
-            disc_optim.zero_grad()
             d_loss.backward()
-            disc_optim.step()
+            change_requires_grad(model, True)
 
+            change_requires_grad(loss_fn.discriminator, False)
             loss, (nll_loss, object_loss, face_loss) = loss_fn(optimizer_idx=0, global_step=step, images=img,
                                                                reconstructions=img_rec,
                                                                codebook_loss=q_loss, bbox_obj=bbox_objects,
                                                                bbox_face=bbox_faces,
-                                                               last_layer=model.decoder.model[-1])
-            vq_optim.zero_grad()
+                                                               last_layer=model.module.decoder.model[-1])
             loss.backward()
-            vq_optim.step()
+            change_requires_grad(loss_fn.discriminator, True)
+            if step%cfg.accumulate_grad==0:
+                disc_optim.step()
+                disc_optim.zero_grad()
+                vq_optim.step()
+                vq_optim.zero_grad()
 
-            if step % 100 == 0:
-                plt.imshow(img_rec[0].permute(1, 2, 0).detach().cpu().numpy())
-                plt.show()
+            #if step % 100 == 0:
+            #    plt.imshow(img_rec[0].permute(1, 2, 0).detach().cpu().numpy())
+            #    plt.show()
 
             if step % cfg.log_period == 0:
                 logger.log(loss=loss, q_loss=q_loss, img=img, img_rec=img_rec, d_loss=d_loss, step=step)
-                torch.save(model.state_dict(), "checkpoint.pt")
+                torch.save(model.module.state_dict(), "checkpoint.pt")
             pbar.set_postfix(loss=loss.item(), q_loss=q_loss.item(), d_loss=d_loss.item(),
                              nll_loss=nll_loss.item(), object_loss=object_loss.item(), face_loss=face_loss.item())
 
-            # if step % cfg.accumulate_grad == 0:
-            #     vq_optim.step()
-            #     vq_optim.zero_grad()
-            #     disc_optim.step()
-            #     disc_optim.zero_grad()
-
             if step == cfg.total_steps:
-                torch.save(model.state_dict(), "final.pt")
+                torch.save(model.module.state_dict(), "final.pt")
                 return
 
 
@@ -139,7 +135,7 @@ def preprocess_dataset(cfg):
     preprocessor(dataset)
 
 
-@hydra.main(config_path="conf", config_name="img_config")
+@hydra.main(config_path="conf", config_name="img_config", version_base="1.2")
 def launch(cfg):
     if "pretrain" in cfg.mode:
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join([str(d) for d in cfg.devices])

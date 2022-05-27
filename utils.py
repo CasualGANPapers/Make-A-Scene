@@ -24,4 +24,7 @@ def collate_fn_(batch):
         captions.append(i[4])
     return [images, segmentation_maps, object_boxes, face_boxes, captions]
 
+def change_requires_grad(model, state):
+    for parameter in model.parameters():
+        parameter.requires_grad = state
 

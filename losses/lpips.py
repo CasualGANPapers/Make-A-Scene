@@ -12,7 +12,7 @@ URL_MAP = {
 }
 
 CKPT_MAP = {
-    "vgg_lpips": "vgg.pth"
+    "vgg_lpips": "/home/ubuntu/Make-A-Scene/weights/vgg.pth"
 }
 
 
@@ -30,7 +30,8 @@ def download(url, local_path, chunk_size=1024):
 
 def get_ckpt_path(name, root):
     assert name in URL_MAP
-    path = os.path.join(root, CKPT_MAP[name])
+    #path = os.path.join(root, CKPT_MAP[name])
+    path = os.path.join(CKPT_MAP[name])
     if not os.path.exists(path):
         print(f"Downloading {name} model from {URL_MAP[name]} to {path}")
         download(URL_MAP[name], path)
