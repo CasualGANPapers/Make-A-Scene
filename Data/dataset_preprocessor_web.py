@@ -139,8 +139,8 @@ class PreprocessedWebDataset(WebDataset):
         super().__init__(url, *args, nodesplitter=split_by_node, handler=warn_and_continue, **kwargs)
         self.decode("rgb")
         #self.decode("npz")
-        self.map(ProcessData())
-        self.to_tuple("jpg", "mask", "box_things", "box_face", "txt")
+        self.map(ProcessData(), handler=warn_and_continue)
+        self.to_tuple("jpg", "mask", "box_things", "box_face", "txt", handler=warn_and_continue)
 
 class COCOWebDataset(PreprocessedWebDataset):
     def __init__(self, *args, **kwargs):
@@ -148,7 +148,7 @@ class COCOWebDataset(PreprocessedWebDataset):
 
 class CC3MWebDataset(PreprocessedWebDataset):
     def __init__(self, *args, **kwargs):
-        super().__init__("pipe:aws s3 cp s3://s-mas/cc3m_processed/{00000..00011}.tar -", *args, **kwargs)
+        super().__init__("pipe:aws s3 cp s3://s-mas/cc3m_processed/{00000..00311}.tar -", *args, **kwargs)
 
 class S3ProcessedDataset(PreprocessedWebDataset):
     datasets = {

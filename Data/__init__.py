@@ -5,4 +5,5 @@ try:
     from .preprocessor import BasePreprocessor
     from .preprocessor_web import WebPreprocessor
 except ModuleNotFoundError:
-    warn("Some dependencies missing for data preprocessing.")
+    #warn("Some dependencies missing for data preprocessing.")
+    pass

@@ -4,6 +4,8 @@ Code taken from and modified https://github.com/cydonia999/VGGFace2-pytorch
 
 import torch
 import torch.nn as nn
+from torchvision import transforms
+from torchvision.transforms.functional import crop
 
 __all__ = ['FaceLoss']
 
@@ -75,6 +77,11 @@ class FaceLoss(nn.Module):
 
         for param in self.parameters():
             param.requires_grad = False
+
+        self.face_transforms = nn.Sequential(
+                                        transforms.Resize(256),
+                                        transforms.CenterCrop(254)
+                                        )
         self.eval()
 
     def _make_layer(self, block, planes, blocks, stride=1):
@@ -113,22 +120,45 @@ class FaceLoss(nn.Module):
 
         return features
 
-    def forward(self, x, x_rec):
+    def forward(self, img, rec, bbox):
         """
         Takes in original image and reconstructed image and feeds it through face network and takes the difference
         between the different resolutions and scales by alpha_{i}.
         Normalizing the features and applying spatial resolution was taken from LPIPS and wasn't mentioned in the paper.
         """
-        images = torch.concat([x, x_rec], dim=0)  # batch
-        features = self._forward(images)
+        faces = self.prepare_faces(img, rec, bbox)
+        if faces is None:
+            return img.new_tensor(0)
+        faces = faces[:6] # otherwise it may cause oom error.
+        features = self._forward(faces)
         features = [f.chunk(2) for f in features]
         # diffs = [a * torch.abs(p[0] - p[1]).sum() for a, p in zip(self.alphas, features)]
-        diffs = [a * torch.abs(p[0] - p[1]).mean() for a, p in zip(self.alphas, features)]
+        diffs = [a * torch.abs(p[0] - p[1]).sum(dim=0).mean() for a, p in zip(self.alphas, features)]
         # diffs = [a*torch.abs(self.norm_tensor(tf) - self.norm_tensor(rf)) for a, tf, rf in zip(self.alphas, true_features, rec_features)]
 
         # diffs = [a * torch.mean(torch.abs(tf - rf)) for a, tf, rf in zip(self.alphas, features)]
         return sum(diffs)
         # return sum(diffs) / len(diffs)
+
+    def prepare_faces(self, imgs, recs, bboxes):
+        faces_gt = []
+        faces_gen = []
+        for img, rec, bboxes in zip(imgs, recs, bboxes):
+            for bbox in bboxes:
+                top = bbox[1]
+                left = bbox[0]
+                height = bbox[3] - bbox[1]
+                width = bbox[2] - bbox[0]
+                crop_img = crop(img, top, left, height, width)
+                faces_gt.append(self.face_transforms(crop_img))
+                crop_rec = crop(rec, top, left, height, width)
+                faces_gen.append(self.face_transforms(crop_rec))
+        if len(faces_gt) == 0:
+            return None
+        faces_gt = torch.stack(faces_gt, dim=0)
+        faces_gen = torch.stack(faces_gen, dim=0)
+        return torch.cat([faces_gt, faces_gen], dim=0)
+
 
 
 if __name__ == '__main__':

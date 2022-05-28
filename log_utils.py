@@ -15,14 +15,18 @@ class Logger:
         self.step = 0
         os.makedirs("./results")
 
-    def log(self, loss, q_loss, img, img_rec, d_loss=None, step=None):
+    def log(self, step=None, img=None, img_rec=None, **kwargs):
         if self.proc_id != 0:
             return
-        self.step = step or self.step + 1
-        self.writer.add_scalar("Loss", loss.item() - q_loss.item(), self.step)
-        self.writer.add_scalar("QLoss", q_loss.item(), self.step)
-        if d_loss:
-            self.writer.add_scalar("Disc_Loss", d_loss.item(), self.step)
+        self.step = step if step is not None else self.step + 1
+        for key in kwargs:
+            self.writer.add_scalar(key, kwargs[key].detach().cpu().item(), self.step)
+        if img is not None and img_rec is not None and self.step%500==0:
+            img = img.detach().cpu()
+            img_rec = img_rec.detach().cpu()
+            pairs = torch.cat([img,img_rec]).detach().cpu()
+            img_grid = vutils.make_grid(pairs)
+            self.writer.add_image('samples', img_grid.detach().cpu(), global_step=step)
 
 
 class Visualizer:

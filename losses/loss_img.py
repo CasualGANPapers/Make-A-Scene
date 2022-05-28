@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .lpips import LPIPS
+from .lpips_with_object import LPIPSWithObject
 from .discriminator import Discriminator, weights_init
 from .face_loss import FaceLoss
 from torchvision.transforms.functional import crop
@@ -41,11 +42,11 @@ class VQLPIPSWithDiscriminator(nn.Module):
         super().__init__()
         self.codebook_weight = codebook_weight
         self.pixel_weight = pixelloss_weight
-        self.perceptual_loss = LPIPS().eval()
+        self.perceptual_loss = LPIPSWithObject().eval()
         self.perceptual_weight = perceptual_weight
 
         self.face_loss = FaceLoss()
-        self.object_loss = self.perceptual_loss
+        #self.object_loss = self.perceptual_loss
 
         self.discriminator = Discriminator().apply(weights_init)
         self.discriminator_iter_start = disc_start
@@ -77,43 +78,32 @@ class VQLPIPSWithDiscriminator(nn.Module):
         if optimizer_idx == 0:  # vqvae loss
             rec_loss = torch.abs(images.contiguous() - reconstructions.contiguous())
             p_loss = self.perceptual_loss(
-                images.contiguous(), reconstructions.contiguous()
+                images.contiguous(), reconstructions.contiguous(), bbox_obj
             )
             rec_loss = rec_loss + self.perceptual_weight * p_loss
 
             nll_loss = rec_loss
             nll_loss = torch.mean(nll_loss)
 
-            face_loss = images.new_tensor(0)
-            for img, rec, bboxes in zip(images, reconstructions, bbox_face):
-                for bbox in bboxes:
-                    top = bbox[1]
-                    left = bbox[0]
-                    height = bbox[3] - bbox[1]
-                    width = bbox[2] - bbox[0]
-                    crop_img = crop(img, top, left, height, width).unsqueeze(
-                        0
-                    )  # bbox needs to be [x, y, height, width]
-                    crop_rec = crop(rec, top, left, height, width).unsqueeze(0)
-                    face_loss += self.face_loss(
-                        crop_img.contiguous(), crop_rec.contiguous()
-                    ).mean()
+            face_loss = self.face_loss(images, reconstructions, bbox_face)
 
             object_loss = images.new_tensor(0)
-            for img, rec, bboxes in zip(images, reconstructions, bbox_obj):
-                for bbox in bboxes:
-                    # xmin, ymin, xmax, ymax
-                    top = bbox[1]
-                    left = bbox[0]
-                    height = bbox[3] - bbox[1]
-                    width = bbox[2] - bbox[0]
-                    crop_img = crop(img, *bbox).unsqueeze(
-                        0
-                    )  # bbox needs to be [x, y, height, width]
-                    crop_rec = crop(rec, *bbox).unsqueeze(0)
-                    object_loss += self.object_loss(
-                        crop_img.contiguous(), crop_rec.contiguous()
-                    ).mean()  # TODO: check if crops are actually correct
+            #for img, rec, bboxes in zip(images, reconstructions, bbox_obj):
+            #    img_object_loss = img.new_tensor(0)
+            #    for bbox in bboxes:
+            #        # xmin, ymin, xmax, ymax
+            #        top = bbox[1]
+            #        left = bbox[0]
+            #        height = bbox[3] - bbox[1]
+            #        width = bbox[2] - bbox[0]
+            #        crop_img = crop(img, top, left, height, width).unsqueeze(
+            #            0
+            #        )  # bbox needs to be [x, y, height, width]
+            #        crop_rec = crop(rec, top, left, height, width).unsqueeze(0)
+            #        img_object_loss += self.object_loss(
+            #            crop_img.contiguous(), crop_rec.contiguous()
+            #        ).mean()  # TODO: check if crops are actually correct
+            #    object_loss += img_object_loss/(len(bboxes)+1)
 
             logits_fake = self.discriminator(
                 reconstructions.contiguous()

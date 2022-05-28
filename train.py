@@ -4,12 +4,15 @@ import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader
 from torch.nn.parallel import DistributedDataParallel
+import torchvision
 import torch.multiprocessing as mp
 from tqdm import tqdm
 import hydra
 from log_utils import Logger, Visualizer
 from utils import collate_fn, change_requires_grad
 import os
+from time import time
+import traceback
 
 
 def train(proc_id, cfg):
@@ -21,6 +24,7 @@ def train(proc_id, cfg):
         dist.init_process_group(backend="nccl", init_method="env://", world_size=len(cfg.devices), rank=proc_id)
     device = torch.device(proc_id)
     dataset = hydra.utils.instantiate(cfg.dataset, _recursive_=False)
+    print(cfg.dataset)
     dataloader = DataLoader(dataset, **cfg.dataloader, collate_fn=collate_fn)
     model = hydra.utils.instantiate(cfg.model).to(device)
     if cfg.resume:
@@ -30,8 +34,6 @@ def train(proc_id, cfg):
         model = DistributedDataParallel(model, device_ids=[device], output_device=device, find_unused_parameters=True)
     loss_fn = hydra.utils.instantiate(cfg.loss).to(device)
     logger = Logger(proc_id, device=device)
-
-    dataloader_iter = iter(dataloader)
 
     if cfg.mode == "pretrain_segmentation":
         optim = torch.optim.Adam(model.parameters(), **cfg.optimizer)
@@ -60,47 +62,57 @@ def train(proc_id, cfg):
         vq_optim = torch.optim.Adam(model.parameters(), **cfg.optimizer.vq)
         disc_optim = torch.optim.Adam(loss_fn.discriminator.parameters(), **cfg.optimizer.disc)
 
-        pbar = tqdm(range(cfg.total_steps))
-        data = next(dataloader_iter)  # try to overfit single image
-        img, _, bbox_objects_all, bbox_faces_all, _ = data
-        img = img.to(device)
-        for step in pbar:
-            bbox_objects = copy.deepcopy(bbox_objects_all)
-            bbox_faces = copy.deepcopy(bbox_faces_all)
-            img_rec, q_loss = model(img)
+        pbar = tqdm(enumerate(dataloader), total=cfg.total_steps) if proc_id==0 else enumerate(dataloader)
+        try:
+            t = time()
+            for step, data in pbar:
+                t = time()
+                img, _, bbox_objects_all, bbox_faces_all, _ = data
+                img = img.to(device)
+                bbox_objects = copy.deepcopy(bbox_objects_all)
+                bbox_faces = copy.deepcopy(bbox_faces_all)
+                t = time()
+                img_rec, q_loss = model(img)
+                t = time()
 
-            change_requires_grad(model, False)
-            d_loss = loss_fn(optimizer_idx=1, global_step=step, images=img, reconstructions=img_rec)
-            d_loss.backward()
-            change_requires_grad(model, True)
+                change_requires_grad(model, False)
+                d_loss = loss_fn(optimizer_idx=1, global_step=step, images=img, reconstructions=img_rec)
+                d_loss.backward()
+                change_requires_grad(model, True)
+                t = time()
 
-            change_requires_grad(loss_fn.discriminator, False)
-            loss, (nll_loss, object_loss, face_loss) = loss_fn(optimizer_idx=0, global_step=step, images=img,
-                                                               reconstructions=img_rec,
-                                                               codebook_loss=q_loss, bbox_obj=bbox_objects,
-                                                               bbox_face=bbox_faces,
-                                                               last_layer=model.module.decoder.model[-1])
-            loss.backward()
-            change_requires_grad(loss_fn.discriminator, True)
-            if step%cfg.accumulate_grad==0:
-                disc_optim.step()
-                disc_optim.zero_grad()
-                vq_optim.step()
-                vq_optim.zero_grad()
+                change_requires_grad(loss_fn.discriminator, False)
+                loss, (nll_loss, object_loss, face_loss) = loss_fn(optimizer_idx=0, global_step=step, images=img,
+                                                                   reconstructions=img_rec,
+                                                                   codebook_loss=q_loss, bbox_obj=bbox_objects,
+                                                                   bbox_face=bbox_faces,
+                                                                   last_layer=model.module.decoder.model[-1])
+                t = time()
+                loss.backward()
+                change_requires_grad(loss_fn.discriminator, True)
+                t = time()
+                if step%cfg.accumulate_grad==0:
+                    disc_optim.step()
+                    disc_optim.zero_grad()
+                    vq_optim.step()
+                    vq_optim.zero_grad()
 
-            #if step % 100 == 0:
-            #    plt.imshow(img_rec[0].permute(1, 2, 0).detach().cpu().numpy())
-            #    plt.show()
+                ### LOGGING PART
+                if step % cfg.log_period == 0:
+                    logger.log(loss=loss, q_loss=q_loss, img=img, img_rec=img_rec, d_loss=d_loss, nll_loss=nll_loss, object_loss=object_loss, face_loss=face_loss, step=step)
+                    torch.save(model.module.state_dict(), "checkpoint.pt")
 
-            if step % cfg.log_period == 0:
-                logger.log(loss=loss, q_loss=q_loss, img=img, img_rec=img_rec, d_loss=d_loss, step=step)
-                torch.save(model.module.state_dict(), "checkpoint.pt")
-            pbar.set_postfix(loss=loss.item(), q_loss=q_loss.item(), d_loss=d_loss.item(),
-                             nll_loss=nll_loss.item(), object_loss=object_loss.item(), face_loss=face_loss.item())
+                if step == cfg.total_steps:
+                    torch.save(model.module.state_dict(), "final.pt")
+                    return
+        except Exception as e:
+            print('Caught exception in worker thread (x = %d):' % proc_id)
 
-            if step == cfg.total_steps:
-                torch.save(model.module.state_dict(), "final.pt")
-                return
+            # This prints the type, value, and stack trace of the
+            # current exception being handled.
+            with open("error.log", "a") as f:
+                traceback.print_exc(file=f)
+            raise e
 
 
 def visualize(cfg):

@@ -46,8 +46,11 @@ optimizer:
       - 0.9
 
 dataset:
-  _target_: Data.dataset_preprocessor_web.CC3MWebDataset
+  _target_: Data.dataset_preprocessor_web.S3ProcessedDataset
   resampled: True
+  names:
+    - cc3m
+    - cc12m
 #  path: file:D:/PycharmProjects/Make-A-Scene/server/Make-A-Scene/dataset/coco/{00000..00004}.tar
 #  path: file:D:/PycharmProjects/Make-A-Scene/server/Make-A-Scene/dataset/coco/great_dataset.tar
 
@@ -60,7 +63,7 @@ loss:
 
 dataloader:
   batch_size: ${batch_size}
-  num_workers: 16
+  num_workers: 8
   pin_memory: True
 
 hydra:
