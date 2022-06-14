@@ -27,12 +27,11 @@ def train(proc_id, cfg):
     print(cfg.dataset)
     dataloader = DataLoader(dataset, **cfg.dataloader, collate_fn=collate_fn)
     model = hydra.utils.instantiate(cfg.model).to(device)
-    if cfg.resume:
-        state_dict = torch.load(cfg.checkpoint, map_location=device)
-        model.load_state_dict(state_dict)
-    if parallel:
-        model = DistributedDataParallel(model, device_ids=[device], output_device=device, find_unused_parameters=True)
     loss_fn = hydra.utils.instantiate(cfg.loss).to(device)
+    if parallel:
+        model = DistributedDataParallel(model, device_ids=[device], output_device=device) #just try, find_unused_parameters=True)
+        if "discriminator" in loss_fn._modules.keys():
+            loss_fn = DistributedDataParallel(loss_fn, device_ids=[device], output_device=device,)
     logger = Logger(proc_id, device=device)
 
     if cfg.mode == "pretrain_segmentation":
@@ -60,46 +59,102 @@ def train(proc_id, cfg):
 
     elif cfg.mode == "pretrain_image":
         vq_optim = torch.optim.Adam(model.parameters(), **cfg.optimizer.vq)
-        disc_optim = torch.optim.Adam(loss_fn.discriminator.parameters(), **cfg.optimizer.disc)
+        for param_group in vq_optim.param_groups:
+            param_group["lr"]/=cfg.accumulate_grad
+        disc_optim = torch.optim.Adam(loss_fn.module.discriminator.parameters(), **cfg.optimizer.disc)
+        for param_group in disc_optim.param_groups:
+            param_group["lr"]/=cfg.accumulate_grad
 
-        pbar = tqdm(enumerate(dataloader), total=cfg.total_steps) if proc_id==0 else enumerate(dataloader)
+        start = 0
+        if cfg.resume:
+            checkpoint = torch.load(cfg.checkpoint, map_location=device)
+            model.module.load_state_dict(checkpoint["model"])
+            loss_fn.module.discriminator.load_state_dict(checkpoint["discriminator"])
+            vq_optim.load_state_dict(checkpoint["optim"])
+            disc_optim.load_state_dict(checkpoint["disc_optim"])
+            start = checkpoint["step"]
+            model.module.quantize.q_counter = start
+
+        pbar = tqdm(enumerate(dataloader, start=start), total=cfg.total_steps, initial=start) if proc_id == 0 else enumerate(dataloader, start=start)
         try:
-            t = time()
             for step, data in pbar:
-                t = time()
-                img, _, bbox_objects_all, bbox_faces_all, _ = data
+                img, _, bbox_objects, bbox_faces, _ = data
                 img = img.to(device)
-                bbox_objects = copy.deepcopy(bbox_objects_all)
-                bbox_faces = copy.deepcopy(bbox_faces_all)
-                t = time()
+                bbox_objects = bbox_objects.to(device).to(torch.float32)
                 img_rec, q_loss = model(img)
-                t = time()
 
                 change_requires_grad(model, False)
-                d_loss = loss_fn(optimizer_idx=1, global_step=step, images=img, reconstructions=img_rec)
+                d_loss , (d_loss_ema,) = loss_fn(optimizer_idx=1, global_step=step, images=img, reconstructions=img_rec)
                 d_loss.backward()
                 change_requires_grad(model, True)
-                t = time()
 
-                change_requires_grad(loss_fn.discriminator, False)
-                loss, (nll_loss, object_loss, face_loss) = loss_fn(optimizer_idx=0, global_step=step, images=img,
-                                                                   reconstructions=img_rec,
-                                                                   codebook_loss=q_loss, bbox_obj=bbox_objects,
-                                                                   bbox_face=bbox_faces,
-                                                                   last_layer=model.module.decoder.model[-1])
-                t = time()
+                change_requires_grad(loss_fn.module.discriminator, False)
+                loss, (nll_loss, face_loss, g_loss) = loss_fn(optimizer_idx=0, global_step=step, images=img,
+                                                      reconstructions=img_rec,
+                                                      codebook_loss=q_loss, bbox_obj=bbox_objects,
+                                                      bbox_face=bbox_faces,
+                                                      last_layer=model.module.decoder.model[-1])
                 loss.backward()
-                change_requires_grad(loss_fn.discriminator, True)
-                t = time()
-                if step%cfg.accumulate_grad==0:
+                change_requires_grad(loss_fn.module.discriminator, True)
+                if step % cfg.accumulate_grad == 0:
                     disc_optim.step()
                     disc_optim.zero_grad()
                     vq_optim.step()
                     vq_optim.zero_grad()
 
+                if step % cfg.log_period == 0 and proc_id == 0:
+                    logger.log(loss=loss, q_loss=q_loss, img=img, img_rec=img_rec, d_loss=d_loss, nll_loss=nll_loss,
+                               face_loss=face_loss, g_loss=g_loss, d_loss_ema=d_loss_ema, step=step)
+                if step % cfg.save_period == 0 and proc_id == 0:
+                    state = {
+                        "model": model.module.state_dict(),
+                        "discriminator": loss_fn.module.discriminator.state_dict(),
+                        "optim": vq_optim.state_dict(),
+                        "disc_optim": disc_optim.state_dict(),
+                        "step": step
+                    }
+                    torch.save(state, f"checkpoint_{step//5e4}.pt")
+
+                if step == cfg.total_steps:
+                    state = {
+                        "model": model.module.state_dict(),
+                        "discriminator": loss_fn.module.discriminator.state_dict(),
+                        "optim": vq_optim.state_dict(),
+                        "disc_optim": disc_optim.state_dict(),
+                        "step": step
+                    }
+                    torch.save(state, "final.pt")
+                    return
+        except Exception as e:
+            print('Caught exception in worker thread (x = %d):' % proc_id)
+            # This prints the type, value, and stack trace of the
+            # current exception being handled.
+            with open("error.log", "a") as f:
+                traceback.print_exc(file=f)
+            raise e
+
+    elif cfg.mode == "train_transformer":
+        optim = torch.optim.Adam(model.parameters(), **cfg.optimizer.stage2)
+
+        pbar = tqdm(enumerate(dataloader), total=cfg.total_steps) if proc_id == 0 else enumerate(dataloader)
+        try:
+            for step, data in pbar:
+                img_token, seg_token, _, _, text_token = data
+                img_token = img_token.to(device)
+                seg_token = seg_token.to(device)
+                text_token = text_token.to(device)
+
+                pred_token = model(text_token, seg_token, img_token)
+
+                loss = F.cross_entropy(pred_token.view(-1, pred_token.shape[-1]), img_token.view(-1))
+                loss.backward()
+                if step % cfg.accumulate_grad == 0:
+                    optim.step()
+                    optim.zero_grad()
+
                 ### LOGGING PART
                 if step % cfg.log_period == 0:
-                    logger.log(loss=loss, q_loss=q_loss, img=img, img_rec=img_rec, d_loss=d_loss, nll_loss=nll_loss, object_loss=object_loss, face_loss=face_loss, step=step)
+                    logger.log(loss=loss, step=step)
                     torch.save(model.module.state_dict(), "checkpoint.pt")
 
                 if step == cfg.total_steps:
@@ -113,7 +168,6 @@ def train(proc_id, cfg):
             with open("error.log", "a") as f:
                 traceback.print_exc(file=f)
             raise e
-
 
 def visualize(cfg):
     device = torch.device(cfg.devices[0])
