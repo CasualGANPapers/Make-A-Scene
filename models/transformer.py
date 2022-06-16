@@ -307,7 +307,7 @@ class MakeAScene(nn.Module):
 
     def forward(self, text_tokens, seg_tokens, img_tokens):
         text_range = torch.arange(self.text_seq_length)
-        text_range += (self.vocab_size - self.text_seq_length)
+        text_range += (self.text_vocab_size - self.text_seq_length)
         text_range = text_range.to(self.device)
         text_tokens = torch.where(text_tokens == 0, text_range, text_tokens)
         text_pos = self.text_pos_embeddings(torch.arange(text_tokens.shape[1], device=self.device))
@@ -319,6 +319,19 @@ class MakeAScene(nn.Module):
             embeddings = torch.cat((text_embeddings, image_embeddings), dim=1)
         else:
             embeddings = text_embeddings
+            
+        attention_mask = torch.tril(
+            torch.ones((embeddings.shape[0], 1, self.total_seq_length, self.total_seq_length), device=self.device)
+        )
+        attention_mask = attention_mask[:, :, :embeddings.shape[1], :embeddings.shape[1]]
+
+        transformer_output, present_cache = self.transformer(
+            embeddings, attention_mask,
+            cache=None, use_cache=False
+        )
+
+        logits = self.to_logits(transformer_output)
+        return logits[:, -self.image_seq_length:, :]
 
 
     # def forward(self, text_tokens, seg_tokens, img_tokens):

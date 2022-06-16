@@ -144,9 +144,12 @@ def train(proc_id, cfg):
                 seg_token = seg_token.to(device)
                 text_token = text_token.to(device)
 
-                pred_token = model(text_token, seg_token, img_token)
+                if step >= cfg.start_uncond and random() < cfg.uncond_p:
+                    text_token *= 0
+                
+                pred_logit = model(text_token, seg_token, img_token)
 
-                loss = F.cross_entropy(pred_token.view(-1, pred_token.shape[-1]), img_token.view(-1))
+                loss = F.cross_entropy(pred_logit.view(-1, pred_logit.shape[-1]), img_token.view(-1))
                 loss.backward()
                 if step % cfg.accumulate_grad == 0:
                     optim.step()
