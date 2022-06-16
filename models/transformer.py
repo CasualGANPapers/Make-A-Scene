@@ -279,7 +279,6 @@ class MakeAScene(nn.Module):
         self.text_length = text_length
         self.total_length = self.text_length + self.image_length * 2
         self.text_vocab_size = text_vocab_size
-        self.image_vocab_size = image_vocab_size
 
         self.transformer = Transformer(**transformer_config)
 
@@ -303,8 +302,6 @@ class MakeAScene(nn.Module):
             torch.nn.LayerNorm(hidden_dim),  # TODO: check if this is redundant
             torch.nn.Linear(hidden_dim, image_vocab_size),
         )
-
-        self.embedding_dropout = torch.nn.Dropout(embedding_dropout_prob)
 
     def _init_weights(self, module):
         if isinstance(module, (nn.Linear, nn.Embedding)):
