@@ -277,8 +277,9 @@ class MakeAScene(nn.Module):
         super(MakeAScene, self).__init__()
         self.image_length = image_tokens_per_dim ** 2
         self.text_length = text_length
-        self.total_length = self.text_length + self.seg_length + self.image_length
+        self.total_length = self.text_length + self.image_length * 2
         self.text_vocab_size = text_vocab_size
+        self.image_vocab_size = image_vocab_size
 
         self.transformer = Transformer(**transformer_config)
 
@@ -300,7 +301,7 @@ class MakeAScene(nn.Module):
 
         self.to_logits = torch.nn.Sequential(
             torch.nn.LayerNorm(hidden_dim),  # TODO: check if this is redundant
-            torch.nn.Linear(hidden_dim, image_vocab_size + seg_vocab_size + text_vocab_size),
+            torch.nn.Linear(hidden_dim, image_vocab_size),
         )
 
         self.embedding_dropout = torch.nn.Dropout(embedding_dropout_prob)
