@@ -1,5 +1,5 @@
 # Make-A-Scene - PyTorch
-Pytorch implementation (inofficial) of Make-A-Scene: Scene-Based Text-to-Image Generation with Human Priors (https://arxiv.org/pdf/2203.13131.pdf)
+Pytorch implementation (unofficial) of Make-A-Scene: Scene-Based Text-to-Image Generation with Human Priors
 
 <p align="center">
 <img width="500" alt="results" src="https://user-images.githubusercontent.com/61938694/160241766-38daac29-6d07-4ff3-97ac-5b0f56e17271.png">
@@ -7,11 +7,11 @@ Pytorch implementation (inofficial) of Make-A-Scene: Scene-Based Text-to-Image G
 </p>
 
 ## Note: this is work in progress. 
-Everyone is happily invited to contribute --> Discord Channel: https://discord.gg/hCRMGRZkC6
+We are at training stage! The process can be followed in the Discord-Channel on the LAION Discord https://discord.gg/DghvZDKu.
+The data preprocessing has been finished as well as training VQSEG. We are currently training VQIMG. Training checkpoints will be released soon with demos.
+The transformer implementation is in progess and will hopefully be started to train as soon as VQIMG finishes.
 
-We would love to open-source a trained model. The model is a billion parameter model. Training it requires a lot of compute. If anyone can provide computational resources, let us know.
-
-## Paper Description:
+## Paper Description
 Make-A-Scene modifies the VQGAN framework. It makes heavy use of using semantic segmentation maps for extra conditioning. This enables more influence on the generation process. Morever, it also conditions on text. The main improvements are the following:
 1. Segmentation condition: separate VQVAE is trained (VQ-SEG) + loss modified to a weighted binary cross entropy. (3.4)
 2. VQGAN training (VQ-IMG) is extended by Face-Loss & Object-Loss (3.3 & 3.5)
@@ -25,7 +25,7 @@ Make-A-Scene modifies the VQGAN framework. It makes heavy use of using semantic 
 
 ## What needs to be done?
 Refer to the different folders to see details.
-- [ ] [VQ-SEG](https://github.com/CasualGANPapers/Make-A-Scene/tree/main/VQ-SEG)
+- [X] [VQ-SEG](https://github.com/CasualGANPapers/Make-A-Scene/tree/main/VQ-SEG)
 - [ ] [VQ-IMG](https://github.com/CasualGANPapers/Make-A-Scene/tree/main/VQ-IMG)
 - [ ] [Transformer]()
 - [X] [Data Aggregation](https://github.com/CasualGANPapers/Make-A-Scene/tree/main/Data)
