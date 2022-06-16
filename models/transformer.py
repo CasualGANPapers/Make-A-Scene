@@ -271,13 +271,17 @@ class MakeAScene(nn.Module):
                  image_vocab_size,
                  seg_vocab_size,
                  text_vocab_size,
+                 seg_tokens_per_dim,
                  image_tokens_per_dim,
-                 text_length,
+                 text_length
                  ):
         super(MakeAScene, self).__init__()
+        self.image_tokens_per_dim = image_tokens_per_dim
+        self.seg_tokens_per_dim = seg_tokens_per_dim
         self.image_length = image_tokens_per_dim ** 2
+        self.seg_length = seg_tokens_per_dim ** 2
         self.text_length = text_length
-        self.total_length = self.text_length + self.image_length * 2
+        self.total_length = self.text_length + self.seg_length + self.image_length
         self.text_vocab_size = text_vocab_size
 
         self.transformer = Transformer(**transformer_config)
@@ -288,8 +292,8 @@ class MakeAScene(nn.Module):
         self.padding_token_embedding = nn.Parameter(torch.randn(1, 1, hidden_dim))
 
         self.text_pos_embeddings = _init_weightstorch.nn.Embedding(text_length + 1, hidden_dim)
-        self.seg_row_embeddings = torch.nn.Embedding(image_tokens_per_dim, hidden_dim)
-        self.seg_col_embeddings = torch.nn.Embedding(image_tokens_per_dim, hidden_dim)
+        self.seg_row_embeddings = torch.nn.Embedding(seg_tokens_per_dim, hidden_dim)
+        self.seg_col_embeddings = torch.nn.Embedding(seg_tokens_per_dim, hidden_dim)
         self.image_row_embeddings = torch.nn.Embedding(image_tokens_per_dim, hidden_dim)
         self.image_col_embeddings = torch.nn.Embedding(image_tokens_per_dim, hidden_dim)
         self._init_weights(self.text_pos_embeddings)
@@ -315,10 +319,10 @@ class MakeAScene(nn.Module):
     def get_seg_pos_embeddings(self, seg_input_ids):
         input_shape = seg_input_ids.size()
         row_ids = torch.arange(input_shape[-1],
-                               dtype=torch.long, device=self.device) // self.image_tokens_per_dim
+                               dtype=torch.long, device=self.device) // self.seg_tokens_per_dim
         row_ids = row_ids.unsqueeze(0).view(-1, input_shape[-1])
         col_ids = torch.arange(input_shape[-1]0,
-                               dtype=torch.long, device=self.device) % self.image_tokens_per_dim
+                               dtype=torch.long, device=self.device) % self.seg_tokens_per_dim
         col_ids = col_ids.unsqueeze(0).view(-1, input_shape[-1])
         return self.seg_row_embeddings(row_ids) + self.seg_col_embeddings(col_ids)
 
@@ -361,24 +365,3 @@ class MakeAScene(nn.Module):
 
         logits = self.to_logits(transformer_output)
         return logits[:, -self.image_length:, :]
-
-
-    # def forward(self, text_tokens, seg_tokens, img_tokens):
-    #     if self.training:
-    #         mask = torch.bernoulli(self.pkeep * torch.ones_like(img_tokens))
-    #         mask = mask.round().to(dtype=torch.int64)
-    #         random_tokens = torch.randint_like(img_tokens, self.vocab_size)
-    #         random_img_tokens = mask * img_tokens + (1 - mask) * random_tokens
-    #     else:
-    #         random_img_tokens = img_tokens
-    #
-    #     tokens = torch.cat([text_tokens, seg_tokens, random_img_tokens], dim=1)
-    #     target = img_tokens
-    #
-    #     logits = self.transformer(tokens[:, :-1])
-    #     logits = logits[:, text_tokens.shape[1] + seg_tokens.shape[1] - 1:]
-    #
-    #     return logits, target
-
-
-
