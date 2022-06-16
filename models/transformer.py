@@ -289,7 +289,6 @@ class MakeAScene(nn.Module):
         self.image_token_embedding = nn.Embedding(image_vocab_size, hidden_dim)
         self.seg_token_embedding = nn.Embedding(seg_vocab_size, hidden_dim)
         self.text_token_embedding = nn.Embedding(text_vocab_size, hidden_dim)
-        self.padding_token_embedding = nn.Parameter(torch.randn(1, 1, hidden_dim))
 
         self.text_pos_embeddings = _init_weightstorch.nn.Embedding(text_length + 1, hidden_dim)
         self.seg_row_embeddings = torch.nn.Embedding(seg_tokens_per_dim, hidden_dim)
