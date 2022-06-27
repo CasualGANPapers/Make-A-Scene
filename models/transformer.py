@@ -8,6 +8,12 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 
+@torch.jit.script
+def gelu(x):
+    """OpenAI's gelu implementation."""
+    return 0.5 * x * (1.0 + torch.tanh(0.7978845608028654 * x * (1.0 + 0.044715 * x * x)))
+
+
 class SelfAttention(nn.Module):
     def __init__(self,
                  hidden_dim,
@@ -32,7 +38,7 @@ class SelfAttention(nn.Module):
         self.rudalle_relax = rudalle_relax
 
     def split_heads(self, x):
-        new_shape = x.size()[:-1] + [self.num_attn_heads, self.hidden_dim // self.num_attn_heads]
+        new_shape = x.size()[:-1] + (self.num_attn_heads, self.hidden_dim // self.num_attn_heads)
         return x.view(*new_shape).permute(0, 2, 1, 3)
 
     def calculate_attention(self, q, k, mask):
@@ -41,16 +47,16 @@ class SelfAttention(nn.Module):
         if self.cogview_pb_relax:
             if self.rudalle_relax:
                 sigma = k_t.std()
-                attn_scores = torch.matmul(q / d, k_t / sigma)
+                attn_scores = torch.matmul(q / self.d, k_t / sigma)
                 attn_scores_max = attn_scores.detach().max(dim=-1)[0]
                 attn_scores_min = (attn_scores.detach() + 65504).min(dim=-1)[0]
                 shift = torch.min(attn_scores_min, attn_scores_max).unsqueeze(-1).expand_as(attn_scores) / 2
                 attn_scores = (attn_scores - shift) / sigma
                 mask_value = 65504
             else:
-                attn_scores = torch.matmul(q / d, k_t)
+                attn_scores = torch.matmul(q / self.d, k_t)
         else:
-            attn_scores = torch.matmul(q, k_t) / d
+            attn_scores = torch.matmul(q, k_t) / self.d
 
         mask = mask[:, :, -attn_scores.shape[-2]:]
         attn_scores = mask * attn_scores - (1. - mask) * mask_value
@@ -90,8 +96,9 @@ class SelfAttention(nn.Module):
         else:
             context = torch.matmul(attn_probs, v)
 
-        context = context.permute(0, 2, 1, 3).view(context.shape[0], context.shape[1],
-                                                   context.shape[2] * context.shape[3])
+        context = context.permute(0, 2, 1, 3).contiguous()
+        context = context.view(context.shape[0], context.shape[1],
+                               context.shape[2] * context.shape[3])
 
         if self.rudalle_relax:
             scale = context.detach().max().item()
@@ -162,9 +169,9 @@ class TransformerLayer(nn.Module):
                                   cogview_pb_relax=cogview_pb_relax,
                                   rudalle_relax=rudalle_relax)
 
-        self.mlp = MLP(hidden_dim=config.dim,
-                       dropout_prob=config.drop_prob,
-                       rudalle_relax=config.rudalle_relax)
+        self.mlp = MLP(hidden_dim=hidden_dim,
+                       dropout_prob=out_dropout_prob,
+                       rudalle_relax=rudalle_relax)
 
     def forward(self, x, mask, cache=None, use_cache=False, mlp_cache=False):
         if self.cogview_layernorm_prescale:
@@ -208,10 +215,11 @@ class Transformer(nn.Module):
                  num_layers,
                  hidden_dim,
                  num_attn_heads,
-                 attn_dropout_prop,
-                 out_dropout_prob,
-                 image_tokens_per_dim=32,
-                 text_length=256,
+                 image_tokens_per_dim,
+                 seg_tokens_per_dim,
+                 text_length,
+                 attn_dropout_prop=0,
+                 out_dropout_prob=0,
                  cogview_pb_relax=True,
                  cogview_sandwich_layernorm=True,
                  cogview_layernorm_prescale=False,
@@ -232,14 +240,14 @@ class Transformer(nn.Module):
                 cogview_sandwich_layernorm,
                 cogview_layernorm_prescale,
                 rudalle_relax
-            ) for _ in num_layers
+            ) for _ in range(num_layers)
         ])
 
-        self.register_buffer("mask", self._create_mask(text_length, image_tokens_per_dim))
+        self.register_buffer("mask", self._create_mask(text_length, seg_tokens_per_dim, image_tokens_per_dim))
         self.final_ln = nn.LayerNorm(hidden_dim, eps=1e-5)
 
-    def _create_mask(self, text_length, image_tokens_per_dim=32):
-        size = text_length + image_tokens_per_dim ** 2
+    def _create_mask(self, text_length, seg_tokens_per_dim, image_tokens_per_dim):
+        size = text_length + seg_tokens_per_dim ** 2 + image_tokens_per_dim ** 2
         return torch.tril(torch.ones(size, size, dtype=torch.float32))
 
     def get_block_size(self):
@@ -252,7 +260,7 @@ class Transformer(nn.Module):
         for i, layer in enumerate(self.layers):
             mask = attn_mask
             layer_mask = self.mask[:mask.size(2), :mask.size(3)]
-            mask = torch.mul(attention_mask, layer_mask)
+            mask = torch.mul(attn_mask, layer_mask)
             x, layer_cache = layer(x, mask, cache.get(i), mlp_cache=i == len(self.layers) - 1, use_cache=use_cache)
             cache[i] = layer_cache
 
@@ -266,13 +274,14 @@ class Transformer(nn.Module):
 
 class MakeAScene(nn.Module):
     def __init__(self,
-                 transformer_config,
+                 num_layers,
                  hidden_dim,
+                 num_attn_heads,
                  image_vocab_size,
                  seg_vocab_size,
                  text_vocab_size,
-                 seg_tokens_per_dim,
                  image_tokens_per_dim,
+                 seg_tokens_per_dim,
                  text_length
                  ):
         super(MakeAScene, self).__init__()
@@ -284,13 +293,15 @@ class MakeAScene(nn.Module):
         self.total_length = self.text_length + self.seg_length + self.image_length
         self.text_vocab_size = text_vocab_size
 
-        self.transformer = Transformer(**transformer_config)
+        self.transformer = Transformer(num_layers, hidden_dim, num_attn_heads,
+                                       image_tokens_per_dim, seg_tokens_per_dim,
+                                       text_length)
 
         self.image_token_embedding = nn.Embedding(image_vocab_size, hidden_dim)
         self.seg_token_embedding = nn.Embedding(seg_vocab_size, hidden_dim)
         self.text_token_embedding = nn.Embedding(text_vocab_size, hidden_dim)
 
-        self.text_pos_embeddings = _init_weightstorch.nn.Embedding(text_length + 1, hidden_dim)
+        self.text_pos_embeddings = torch.nn.Embedding(text_length + 1, hidden_dim)
         self.seg_row_embeddings = torch.nn.Embedding(seg_tokens_per_dim, hidden_dim)
         self.seg_col_embeddings = torch.nn.Embedding(seg_tokens_per_dim, hidden_dim)
         self.image_row_embeddings = torch.nn.Embedding(image_tokens_per_dim, hidden_dim)
@@ -320,7 +331,7 @@ class MakeAScene(nn.Module):
         row_ids = torch.arange(input_shape[-1],
                                dtype=torch.long, device=self.device) // self.seg_tokens_per_dim
         row_ids = row_ids.unsqueeze(0).view(-1, input_shape[-1])
-        col_ids = torch.arange(input_shape[-1]0,
+        col_ids = torch.arange(input_shape[-1],
                                dtype=torch.long, device=self.device) % self.seg_tokens_per_dim
         col_ids = col_ids.unsqueeze(0).view(-1, input_shape[-1])
         return self.seg_row_embeddings(row_ids) + self.seg_col_embeddings(col_ids)
@@ -349,12 +360,12 @@ class MakeAScene(nn.Module):
         embeddings = torch.cat((text_embeddings, seg_embeddings), dim=1)
         if img_tokens is not None:
             img_pos = self.get_image_pos_embeddings(img_tokens)
-            image_embeddings = self.image_embeddings(img_tokens) + img_pos
+            image_embeddings = self.image_token_embedding(img_tokens) + img_pos
             embeddings = torch.cat((embeddings, image_embeddings), dim=1)
             
         attention_mask = torch.tril(
             torch.ones((embeddings.shape[0], 1, self.total_length, self.total_length), device=self.device)
-        )
+        ); 
         attention_mask = attention_mask[:, :, :embeddings.shape[1], :embeddings.shape[1]]
 
         transformer_output, present_cache = self.transformer(
@@ -364,3 +375,28 @@ class MakeAScene(nn.Module):
 
         logits = self.to_logits(transformer_output)
         return logits[:, -self.image_length:, :]
+
+
+if __name__ == '__main__':
+    from omegaconf import OmegaConf
+    batch_size = 2
+
+    num_layers = 2
+    hidden_dim = 64
+    num_attn_heads = 8
+    
+    text_length = 128
+    seg_per_dim = 16
+    image_per_dim = 32
+
+    text_vocab_size = 128
+    seg_vocab_size = 128
+    image_vocab_size = 128
+    
+    model = MakeAScene(num_layers, hidden_dim, num_attn_heads, image_vocab_size, seg_vocab_size, text_vocab_size+text_length, image_per_dim, seg_per_dim, text_length).to('cuda')
+    model.device = torch.device('cuda')
+    pred_logits = model(torch.randint(high=text_vocab_size+text_length, size=(batch_size, text_length)).cuda(),
+                        torch.randint(high=seg_vocab_size, size=(batch_size, seg_per_dim**2)).cuda(),
+                        torch.randint(high=image_vocab_size, size=(batch_size, image_per_dim**2)).cuda())
+
+    assert pred_logits.shape == torch.Size([batch_size, image_per_dim ** 2, image_vocab_size])
