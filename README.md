@@ -29,7 +29,7 @@ Make-A-Scene modifies the VQGAN framework. It makes heavy use of using semantic 
 ## What needs to be done?
 Refer to the different folders to see details.
 - [X] [VQ-SEG](https://github.com/CasualGANPapers/Make-A-Scene/tree/main/VQ-SEG)
-- [ ] [VQ-IMG](https://github.com/CasualGANPapers/Make-A-Scene/tree/main/VQ-IMG)
+- [X] [VQ-IMG](https://github.com/CasualGANPapers/Make-A-Scene/tree/main/VQ-IMG)
 - [ ] [Transformer]()
 - [X] [Data Aggregation](https://github.com/CasualGANPapers/Make-A-Scene/tree/main/Data)
 
