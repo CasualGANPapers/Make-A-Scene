@@ -11,6 +11,9 @@ We are at training stage! The process can be followed in the Discord-Channel on 
 The data preprocessing has been finished as well as training VQSEG. We are currently training VQIMG. Training checkpoints will be released soon with demos.
 The transformer implementation is in progess and will hopefully be started to train as soon as VQIMG finishes.
 
+## Demo
+VQIMG: https://colab.research.google.com/drive/1SPyQ-epTsAOAu8BEohUokN4-b5RM_TnE?usp=sharing
+
 ## Paper Description
 Make-A-Scene modifies the VQGAN framework. It makes heavy use of using semantic segmentation maps for extra conditioning. This enables more influence on the generation process. Morever, it also conditions on text. The main improvements are the following:
 1. Segmentation condition: separate VQVAE is trained (VQ-SEG) + loss modified to a weighted binary cross entropy. (3.4)
@@ -26,7 +29,7 @@ Make-A-Scene modifies the VQGAN framework. It makes heavy use of using semantic 
 ## What needs to be done?
 Refer to the different folders to see details.
 - [X] [VQ-SEG](https://github.com/CasualGANPapers/Make-A-Scene/tree/main/VQ-SEG)
-- [ ] [VQ-IMG](https://github.com/CasualGANPapers/Make-A-Scene/tree/main/VQ-IMG)
+- [X] [VQ-IMG](https://github.com/CasualGANPapers/Make-A-Scene/tree/main/VQ-IMG)
 - [ ] [Transformer]()
 - [X] [Data Aggregation](https://github.com/CasualGANPapers/Make-A-Scene/tree/main/Data)
 
