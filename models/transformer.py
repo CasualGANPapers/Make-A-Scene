@@ -365,7 +365,8 @@ class MakeAScene(nn.Module):
             
         attention_mask = torch.tril(
             torch.ones((embeddings.shape[0], 1, self.total_length, self.total_length), device=self.device)
-        ); 
+        )
+        attention_mask[:, :, :-self.image_length, :-self.image_length] = 1 
         attention_mask = attention_mask[:, :, :embeddings.shape[1], :embeddings.shape[1]]
 
         transformer_output, present_cache = self.transformer(
