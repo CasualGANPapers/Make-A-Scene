@@ -301,7 +301,7 @@ class MakeAScene(nn.Module):
         self.seg_token_embedding = nn.Embedding(seg_vocab_size, hidden_dim)
         self.text_token_embedding = nn.Embedding(text_vocab_size, hidden_dim)
 
-        self.text_pos_embeddings = torch.nn.Embedding(text_length + 1, hidden_dim)
+        self.text_pos_embeddings = torch.nn.Embedding(text_length, hidden_dim)
         self.seg_row_embeddings = torch.nn.Embedding(seg_tokens_per_dim, hidden_dim)
         self.seg_col_embeddings = torch.nn.Embedding(seg_tokens_per_dim, hidden_dim)
         self.image_row_embeddings = torch.nn.Embedding(image_tokens_per_dim, hidden_dim)
@@ -365,7 +365,8 @@ class MakeAScene(nn.Module):
             
         attention_mask = torch.tril(
             torch.ones((embeddings.shape[0], 1, self.total_length, self.total_length), device=self.device)
-        ); 
+        )
+        attention_mask[:, :, :-self.image_length, :-self.image_length] = 1 
         attention_mask = attention_mask[:, :, :embeddings.shape[1], :embeddings.shape[1]]
 
         transformer_output, present_cache = self.transformer(
@@ -374,7 +375,7 @@ class MakeAScene(nn.Module):
         )
 
         logits = self.to_logits(transformer_output)
-        return logits[:, -self.image_length:, :]
+        return logits[:, -self.image_length-1:-1, :]
 
 
 if __name__ == '__main__':
